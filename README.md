@@ -50,6 +50,9 @@ The code repository workflow is composed of the following tasks:
 - **Create repository**  
   Either imports an existing repository or creates a new one based on a template repository.
 
+- **Add collaborators**  
+  Add default collaborators (users or groups) to the repository.
+
 - **Set up nullplatform credentials**  
   Creates a nullplatform `ci` API key and associates it with the new repository so your CI/CD pipelines can create builds and push assets to the platform.
 

@@ -17,7 +17,6 @@ fi
 
 REPOSITORY_NAME=$(basename "$REPOSITORY_URL")
 
-
 if [[ -n "$CODE_REPOSITORY_PROVIDER" ]]; then
   echo "Using CODE_REPOSITORY_PROVIDER from environment: $CODE_REPOSITORY_PROVIDER"
 else
@@ -32,6 +31,8 @@ CODE_REPOSITORY=$(np provider list --categories code-repository --nrn "$NRN" --f
 
 CODE_REPOSITORY_SCRIPT_PATH="scripts/code-repo/$CODE_REPOSITORY_PROVIDER"
 
+CODE_REPOSITORY_COLLABORATORS=$(echo "$CODE_REPOSITORY" | jq .attributes.access.default_collaborators)
+
 export CODE_REPOSITORY_STRATEGY
 
 export REPOSITORY_URL
@@ -39,5 +40,6 @@ export REPOSITORY_NAME
 
 export CODE_REPOSITORY
 export CODE_REPOSITORY_SCRIPT_PATH
+export CODE_REPOSITORY_COLLABORATORS
 
 np service workflow exec --workflow workflows/create_code_repository.yaml

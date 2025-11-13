@@ -96,6 +96,11 @@ To add a new **code repository provider** (for example, `github`):
       Create the actual repository. Depending on the use case, this can:
         - Import an existing repository, or
         - Create a new one based on a template repository.
+   
+    - `add_collaborators`  
+      Add collaborators to the repositories. Collaborators can be:
+      - Users.
+      - Groups.
 
     - `create_secrets`  
       Receive a JSON payload with all the secrets that need to be created and configure them as repository secrets (key–value pairs) in the provider.  
