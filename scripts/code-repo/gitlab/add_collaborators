@@ -72,5 +72,3 @@ echo "$CODE_REPOSITORY_COLLABORATORS" | jq -c '.[]' | while read -r collaborator
 done
 
 echo "Finished adding collaborators"
-
-exit 1
