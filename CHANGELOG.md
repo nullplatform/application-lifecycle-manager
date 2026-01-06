@@ -5,6 +5,12 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
+## [0.3.0] - 2026-01-06
+
+### Fixed
+- Added retry logic with exponential backoff to GitLab pipeline trigger to handle newly created repositories.
+- Improved error visibility in curl commands by showing error messages on failure.
+
 ## [0.2.0] - 2025-11-13
 
 ### Added
