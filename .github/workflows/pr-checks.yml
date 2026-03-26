@@ -1,0 +1,14 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    uses: nullplatform/actions-nullplatform/.github/workflows/shellcheck.yml@main
+    with:
+      script_dirs: entrypoint scripts
