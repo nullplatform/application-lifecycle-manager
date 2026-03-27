@@ -1,27 +1,48 @@
 #!/bin/bash
 
-PIPELINE_RESPONSE=$(curl -s --request POST --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" \
-  "${GITLAB_INSTALLATION_URL}/api/v4/projects/${GITLAB_PROJECT_ID}/pipeline?ref=main" 2>&1 || echo "")
+MAX_RETRIES=5
+RETRY_DELAY=2
 
-if echo "$PIPELINE_RESPONSE" | jq -e '.id' > /dev/null 2>&1; then
-  echo "Pipeline triggered successfully"
-else
-  echo "Could not trigger pipeline directly, trying to create a commit..."
-  
-  # Create an empty commit to trigger CI
-  COMMIT_RESPONSE=$(curl -s --request POST --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" \
+for i in $(seq 1 $MAX_RETRIES); do
+  echo "Attempting to trigger pipeline (attempt $i/$MAX_RETRIES)..."
+
+  PIPELINE_RESPONSE=$(curl -sS --request POST --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" \
+    "${GITLAB_INSTALLATION_URL}/api/v4/projects/${GITLAB_PROJECT_ID}/pipeline?ref=main" 2>&1)
+  CURL_EXIT_CODE=$?
+
+  if [ $CURL_EXIT_CODE -eq 0 ] && echo "$PIPELINE_RESPONSE" | jq -e '.id' > /dev/null 2>&1; then
+    echo "Pipeline triggered successfully"
+    exit 0
+  fi
+
+  if [ $i -lt $MAX_RETRIES ]; then
+    echo "Pipeline trigger failed, retrying in ${RETRY_DELAY}s..."
+    if [ -n "$PIPELINE_RESPONSE" ]; then
+      echo "Response: $PIPELINE_RESPONSE"
+    fi
+    sleep $RETRY_DELAY
+    RETRY_DELAY=$((RETRY_DELAY * 2))
+  fi
+done
+
+echo "Could not trigger pipeline after $MAX_RETRIES attempts, trying to create a commit..."
+if [ -n "$PIPELINE_RESPONSE" ]; then
+  echo "Last response: $PIPELINE_RESPONSE"
+fi
+
+# Create an empty commit to trigger CI
+COMMIT_RESPONSE=$(curl -sS --request POST --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" \
     --header "Content-Type: application/json" \
     --data "{
       \"branch\": \"main\",
       \"commit_message\": \"Trigger CI\",
       \"actions\": []
     }" \
-    "${GITLAB_INSTALLATION_URL}/api/v4/projects/${GITLAB_PROJECT_ID}/repository/commits")
-  
-  if echo "$COMMIT_RESPONSE" | jq -e '.id' > /dev/null 2>&1; then
-    echo "Commit created to trigger CI"
-  else
-    echo "Warning: Could not trigger CI automatically"
-    echo "$COMMIT_RESPONSE" | jq
-  fi
+    "${GITLAB_INSTALLATION_URL}/api/v4/projects/${GITLAB_PROJECT_ID}/repository/commits" 2>&1)
+
+if echo "$COMMIT_RESPONSE" | jq -e '.id' > /dev/null 2>&1; then
+  echo "Commit created to trigger CI"
+else
+  echo "Warning: Could not trigger CI automatically"
+  echo "$COMMIT_RESPONSE" | jq
 fi
