@@ -12,10 +12,17 @@ if [[ $CREATE_STATUS -eq 0 ]]; then
   REPOSITORY=$(echo "$CREATE_OUTPUT" | jq '.repository')
 elif echo "$CREATE_OUTPUT" | grep -q "RepositoryAlreadyExistsException"; then
   echo "ECR repository already exists, fetching its details"
-  REPOSITORY=$(aws ecr describe-repositories \
+  DESCRIBE_OUTPUT=$(aws ecr describe-repositories \
     --repository-names "$ECR_REPOSITORY_NAME" \
     --region "$AWS_REGION" \
-    --output json | jq '.repositories[0]')
+    --output json 2>&1)
+  DESCRIBE_STATUS=$?
+  if [[ $DESCRIBE_STATUS -ne 0 ]]; then
+    echo "ERROR: failed to describe existing ECR repository:"
+    echo "$DESCRIBE_OUTPUT"
+    exit 1
+  fi
+  REPOSITORY=$(echo "$DESCRIBE_OUTPUT" | jq '.repositories[0]')
 else
   echo "ERROR: failed to create ECR repository:"
   echo "$CREATE_OUTPUT"
@@ -27,6 +34,11 @@ ECR_REPOSITORY_ARN=$(echo "$REPOSITORY" | jq -r '.repositoryArn')
 
 if [[ -z "$ECR_REPOSITORY_URI" || "$ECR_REPOSITORY_URI" == "null" ]]; then
   echo "ERROR: could not resolve ECR repository URI from AWS response."
+  exit 1
+fi
+
+if [[ -z "$ECR_REPOSITORY_ARN" || "$ECR_REPOSITORY_ARN" == "null" ]]; then
+  echo "ERROR: could not resolve ECR repository ARN from AWS response."
   exit 1
 fi
 
