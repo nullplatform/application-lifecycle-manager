@@ -1,0 +1,37 @@
+#!/bin/bash
+
+echo "Creating ECR repository: $ECR_REPOSITORY_NAME in region $AWS_REGION"
+
+CREATE_OUTPUT=$(aws ecr create-repository \
+  --repository-name "$ECR_REPOSITORY_NAME" \
+  --region "$AWS_REGION" \
+  --output json 2>&1)
+CREATE_STATUS=$?
+
+if [[ $CREATE_STATUS -eq 0 ]]; then
+  REPOSITORY=$(echo "$CREATE_OUTPUT" | jq '.repository')
+elif echo "$CREATE_OUTPUT" | grep -q "RepositoryAlreadyExistsException"; then
+  echo "ECR repository already exists, fetching its details"
+  REPOSITORY=$(aws ecr describe-repositories \
+    --repository-names "$ECR_REPOSITORY_NAME" \
+    --region "$AWS_REGION" \
+    --output json | jq '.repositories[0]')
+else
+  echo "ERROR: failed to create ECR repository:"
+  echo "$CREATE_OUTPUT"
+  exit 1
+fi
+
+ECR_REPOSITORY_URI=$(echo "$REPOSITORY" | jq -r '.repositoryUri')
+ECR_REPOSITORY_ARN=$(echo "$REPOSITORY" | jq -r '.repositoryArn')
+
+if [[ -z "$ECR_REPOSITORY_URI" || "$ECR_REPOSITORY_URI" == "null" ]]; then
+  echo "ERROR: could not resolve ECR repository URI from AWS response."
+  exit 1
+fi
+
+echo "ECR repository URI: $ECR_REPOSITORY_URI"
+echo "ECR repository ARN: $ECR_REPOSITORY_ARN"
+
+np application patch --id "$APPLICATION_ID" \
+  --body "{\"settings\": {\"asset\": {\"ecr\": {\"uri\": \"$ECR_REPOSITORY_URI\", \"arn\": \"$ECR_REPOSITORY_ARN\"}}}}"
