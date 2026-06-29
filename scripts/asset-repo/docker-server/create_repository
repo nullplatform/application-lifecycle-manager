@@ -1,3 +1,4 @@
 #!/bin/bash
 
-np nrn patch --nrn "$NRN" --body "{\"docker.repository_uri\":\"$DOCKER_SERVER_URI\"}"
+np application patch --id "$APPLICATION_ID" \
+  --body "{\"settings\": {\"asset\": {\"docker_server\": {\"uri\": \"$DOCKER_SERVER_URI\"}}}}"
