@@ -1,4 +1,7 @@
 #!/bin/bash
 
-np application patch --id "$APPLICATION_ID" \
-  --body "{\"settings\": {\"asset\": {\"docker_server\": {\"uri\": \"$DOCKER_SERVER_URI\"}}}}"
+BODY=$(jq -n \
+  --arg uri "$DOCKER_SERVER_URI" \
+  '{settings: {asset: {docker_server: {uri: $uri}}}}')
+
+np application patch --id "$APPLICATION_ID" --body "$BODY"
