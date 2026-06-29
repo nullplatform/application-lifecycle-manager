@@ -19,6 +19,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses the template's pipeline file.
 - Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build.
 - Test suite for the GitHub code repository provider.
+- AWS ECR asset repository provider.
+
+### Changed
+- Docker server: the repository URI is now stored in the application's `settings.asset.docker_server.uri`.
 
 ### Fixed
 - A template that does not resolve now stops the workflow instead of creating an empty repository.
