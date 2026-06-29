@@ -45,5 +45,9 @@ fi
 echo "ECR repository URI: $ECR_REPOSITORY_URI"
 echo "ECR repository ARN: $ECR_REPOSITORY_ARN"
 
-np application patch --id "$APPLICATION_ID" \
-  --body "{\"settings\": {\"asset\": {\"ecr\": {\"uri\": \"$ECR_REPOSITORY_URI\", \"arn\": \"$ECR_REPOSITORY_ARN\"}}}}"
+BODY=$(jq -n \
+  --arg uri "$ECR_REPOSITORY_URI" \
+  --arg arn "$ECR_REPOSITORY_ARN" \
+  '{settings: {asset: {ecr: {uri: $uri, arn: $arn}}}}')
+
+np application patch --id "$APPLICATION_ID" --body "$BODY"

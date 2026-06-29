@@ -90,6 +90,8 @@ agent environment along with:
 | `ECR_REPOSITORY_PATH` | no       | Optional prefix prepended to the repository name.                 |
 | `ECR_USE_NAMESPACE`   | no       | When `true`, joins namespace and application with `/` instead of `-`. |
 
+The generated repository name must satisfy ECR naming rules (lowercase, made up of `[a-z0-9._/-]`, no leading slash). Choose `ECR_REPOSITORY_PATH` and namespace/application slugs accordingly.
+
 **Prerequisites:** the agent host must have the `aws` CLI installed and AWS credentials
 available in its environment (for example, via IRSA on EKS). The bound IAM role needs
 `ecr:CreateRepository` and `ecr:DescribeRepositories`. The repository URI and ARN are read
