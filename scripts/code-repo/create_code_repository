@@ -1,5 +1,10 @@
 #!/bin/bash
 
+if [[ "${CREATE_CODE_REPOSITORY,,}" == "false" ]]; then
+  echo "CREATE_CODE_REPOSITORY=false — skipping code repository creation"
+  return 0
+fi
+
 CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
 
 REPOSITORY_URL=$(echo "$APPLICATION" | jq -r .repository_url)

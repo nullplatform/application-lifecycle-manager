@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if [[ -z "$AWS_REGION" ]]; then
+  echo "ERROR: AWS_REGION is required for the ECR asset provider but is not set."
+  exit 1
+fi
+
+echo "Using AWS_REGION: $AWS_REGION"
+
+export AWS_REGION
+export ECR_REPOSITORY_PATH
+export ECR_USE_NAMESPACE

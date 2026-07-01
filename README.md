@@ -67,7 +67,7 @@ The code repository workflow is composed of the following tasks:
 
 You must configure your asset repository provider through **nullplatform platform settings** or the **nullplatform Terraform provider**.
 
-> **Note:** At the moment, this repository supports **Docker Server** repositories only.
+> **Note:** This repository supports **Docker Server** and **AWS ECR** asset repositories.
 
 #### Workflow
 
@@ -78,6 +78,39 @@ The asset repository workflow is composed of the following tasks:
 
 - **Create repository**  
   Creates a namespace/folder in your Docker registry for the new application and stores its location in the nullplatform API.
+
+#### Using AWS ECR
+
+To use AWS ECR as the asset repository provider, set `ASSET_REPOSITORY_PROVIDER=ecr` in the
+agent environment along with:
+
+| Variable              | Required | Description                                                       |
+|-----------------------|----------|-------------------------------------------------------------------|
+| `AWS_REGION`          | yes      | Region where the ECR repository is created.                       |
+| `ECR_REPOSITORY_PATH` | no       | Optional prefix prepended to the repository name.                 |
+| `ECR_USE_NAMESPACE`   | no       | When `true`, joins namespace and application with `/` instead of `-`. |
+
+The generated repository name must satisfy ECR naming rules (lowercase, made up of `[a-z0-9._/-]`, no leading slash). Choose `ECR_REPOSITORY_PATH` and namespace/application slugs accordingly.
+
+**Prerequisites:** the agent host must have the `aws` CLI installed and AWS credentials
+available in its environment (for example, via IRSA on EKS). The bound IAM role needs
+`ecr:CreateRepository` and `ecr:DescribeRepositories`. The repository URI and ARN are read
+from the AWS API response and persisted to the application's `settings.asset.ecr`.
+
+---
+
+## Toggling repository creation
+
+You can disable either side of the lifecycle independently with environment variables set
+on the agent:
+
+| Variable                   | Default | Effect                                              |
+|----------------------------|---------|-----------------------------------------------------|
+| `CREATE_CODE_REPOSITORY`   | enabled | Set to `false` to skip code repository creation.    |
+| `CREATE_ASSET_REPOSITORY`  | enabled | Set to `false` to skip asset repository creation.   |
+
+Any value other than `false` (case-insensitive), including unset, keeps the default
+behavior of creating the repository.
 
 ---
 
