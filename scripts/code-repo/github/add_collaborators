@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Per-collaborator failures are non-fatal (warn and continue); this loop runs in a
+# pipe subshell, so it intentionally does not abort the workflow. (Contrast create_secrets.)
 echo "$CODE_REPOSITORY_COLLABORATORS" | jq -c '.[]?' | while read -r collaborator; do
   id=$(echo "$collaborator" | jq -r '.id')
   role=$(echo "$collaborator" | jq -r '.role')

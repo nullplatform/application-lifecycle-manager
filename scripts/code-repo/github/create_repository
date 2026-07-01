@@ -5,7 +5,7 @@ if [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
   return
 fi
 
-TEMPLATE_PATH=$(echo "$TEMPLATE_URL" | sed -E 's#https?://github.com/##; s#\.git$##; s#/$##')
+TEMPLATE_PATH=$(echo "$TEMPLATE_URL" | sed -E 's#https?://github\.com/##; s#\.git$##; s#/$##')
 TEMPLATE_OWNER=$(echo "$TEMPLATE_PATH" | cut -d'/' -f1)
 TEMPLATE_REPO=$(echo "$TEMPLATE_PATH" | cut -d'/' -f2)
 
