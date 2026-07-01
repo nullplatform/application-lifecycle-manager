@@ -1,0 +1,16 @@
+#!/bin/bash
+
+echo "Checking if repository exists: $GITHUB_ACCOUNT/$REPOSITORY_NAME"
+
+if gh api "/repos/$GITHUB_ACCOUNT/$REPOSITORY_NAME" >/dev/null 2>&1; then
+  if [[ "$CODE_REPOSITORY_STRATEGY" == "create" ]]; then
+    echo "Error: Repository already exists but strategy is set to 'create'."
+    exit 1
+  fi
+  echo "Repository found and strategy is set to 'import'. Proceeding with import configuration..."
+elif [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
+  echo "Error: Repository does not exist but strategy is set to 'import'."
+  exit 1
+else
+  echo "Repository does not exist and strategy is set to 'create'. Proceeding with repository creation..."
+fi

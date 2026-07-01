@@ -1,0 +1,28 @@
+#!/bin/bash
+
+if [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
+  echo "Strategy is set to 'import'. Skipping repo creation."
+  return
+fi
+
+TEMPLATE_PATH=$(echo "$TEMPLATE_URL" | sed -E 's#https?://github.com/##; s#\.git$##; s#/$##')
+TEMPLATE_OWNER=$(echo "$TEMPLATE_PATH" | cut -d'/' -f1)
+TEMPLATE_REPO=$(echo "$TEMPLATE_PATH" | cut -d'/' -f2)
+
+if [[ -z "$TEMPLATE_OWNER" || -z "$TEMPLATE_REPO" ]]; then
+  echo "Error: invalid template repository URL: $TEMPLATE_URL"
+  exit 1
+fi
+
+echo "Creating repository $GITHUB_ACCOUNT/$REPOSITORY_NAME from template $TEMPLATE_OWNER/$TEMPLATE_REPO"
+
+if ! gh api --method POST "/repos/$TEMPLATE_OWNER/$TEMPLATE_REPO/generate" \
+  -f owner="$GITHUB_ACCOUNT" \
+  -f name="$REPOSITORY_NAME" \
+  -F include_all_branches=false \
+  -F private=true; then
+  echo "Error creating repository from template"
+  exit 1
+fi
+
+echo "Repository created: $GITHUB_ACCOUNT/$REPOSITORY_NAME"
