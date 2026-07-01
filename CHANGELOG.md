@@ -5,6 +5,11 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
+## [Unreleased]
+
+### Added
+- GitHub code repository provider (GitHub App auth via the `gh` CLI).
+
 ## [0.2.0] - 2025-11-13
 
 ### Added

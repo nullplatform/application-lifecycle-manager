@@ -35,7 +35,7 @@ When an application is created, this service coordinates two main tasks:
 
 You must configure your code repository provider through **nullplatform platform settings** or the **nullplatform Terraform provider**.
 
-> **Note:** At the moment, this repository supports **GitLab** repositories only.
+> **Note:** This repository supports **GitLab** and **GitHub** code repositories.
 
 #### Workflow
 
@@ -58,6 +58,24 @@ The code repository workflow is composed of the following tasks:
 
 - **Trigger initial CI build**  
   Optionally kicks off a first CI build so you can deploy your application immediately after creation.
+
+#### Using GitHub
+
+To use GitHub as the code repository provider, set `CODE_REPOSITORY_PROVIDER=github` in the
+agent environment along with a GitHub App's credentials:
+
+| Variable                  | Required | Description                                             |
+|---------------------------|----------|---------------------------------------------------------|
+| `GITHUB_APP_ID`           | yes      | The GitHub App's ID.                                    |
+| `GITHUB_PRIVATE_KEY`      | yes      | The GitHub App's private key (PEM).                     |
+| `GITHUB_INSTALLATION_ID`  | yes      | The App installation ID for the target org.             |
+| `GITHUB_ACCOUNT`          | yes      | The owner/org where repositories are created.           |
+
+**Why a GitHub App (not a PAT):** the App is owned by the organization, is not tied to a
+person, and needs no manual token rotation — an installation token is minted per run and
+expires on its own. Install the App on your org and grant it repository **administration**,
+**contents**, **secrets**, and **actions** permissions. The agent host must have the `gh`
+CLI (installed automatically via `mise` if absent), `openssl`, and `curl`. GitHub.com only.
 
 ---
 
