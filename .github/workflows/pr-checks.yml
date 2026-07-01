@@ -8,7 +8,13 @@ permissions:
   contents: read
 
 jobs:
-  shellcheck:
+  # The reusable workflow runs `find "$SCRIPT_DIRS"`, quoting the value as a
+  # single path — so a space-separated list breaks. Pass one path per job.
+  shellcheck-entrypoint:
     uses: nullplatform/actions-nullplatform/.github/workflows/shellcheck.yml@main
     with:
-      script_dirs: entrypoint scripts
+      script_dirs: entrypoint
+  shellcheck-scripts:
+    uses: nullplatform/actions-nullplatform/.github/workflows/shellcheck.yml@main
+    with:
+      script_dirs: scripts
