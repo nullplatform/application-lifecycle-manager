@@ -1,0 +1,63 @@
+#!/bin/bash
+
+for var in GITHUB_APP_ID GITHUB_PRIVATE_KEY GITHUB_INSTALLATION_ID GITHUB_ACCOUNT; do
+  if [[ -z "${!var}" ]]; then
+    echo "ERROR: $var is required for the GitHub code provider but is not set."
+    exit 1
+  fi
+done
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "gh CLI not found, installing via mise"
+  if ! mise use -g gh@latest; then
+    echo "ERROR: failed to install gh via mise"
+    exit 1
+  fi
+  export PATH="$HOME/.local/share/mise/shims:$PATH"
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh CLI is still not available after install"
+  exit 1
+fi
+
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+NOW=$(date +%s)
+IAT=$((NOW - 60))
+EXP=$((NOW + 540))
+
+JWT_HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+JWT_PAYLOAD=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$IAT" "$EXP" "$GITHUB_APP_ID" | b64url)
+JWT_UNSIGNED="$JWT_HEADER.$JWT_PAYLOAD"
+
+PRIVATE_KEY_FILE=$(mktemp)
+printf '%s' "$GITHUB_PRIVATE_KEY" | sed 's/\\n/\n/g' > "$PRIVATE_KEY_FILE"
+
+JWT_SIGNATURE=$(printf '%s' "$JWT_UNSIGNED" | openssl dgst -sha256 -sign "$PRIVATE_KEY_FILE" | b64url)
+rm -f "$PRIVATE_KEY_FILE"
+
+if [[ -z "$JWT_SIGNATURE" ]]; then
+  echo "ERROR: failed to sign the GitHub App JWT (check GITHUB_PRIVATE_KEY)."
+  exit 1
+fi
+
+JWT="$JWT_UNSIGNED.$JWT_SIGNATURE"
+
+TOKEN_RESPONSE=$(curl -s -X POST \
+  -H "Authorization: Bearer $JWT" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/app/installations/$GITHUB_INSTALLATION_ID/access_tokens")
+
+GH_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token // empty')
+
+if [[ -z "$GH_TOKEN" ]]; then
+  echo "ERROR: could not obtain a GitHub App installation token:"
+  echo "$TOKEN_RESPONSE" | jq . 2>/dev/null || echo "$TOKEN_RESPONSE"
+  exit 1
+fi
+
+echo "Obtained GitHub App installation token for account: $GITHUB_ACCOUNT"
+
+export GH_TOKEN
+export GITHUB_ACCOUNT
