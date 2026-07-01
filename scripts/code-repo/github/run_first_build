@@ -1,0 +1,64 @@
+#!/bin/bash
+
+REPO="$GITHUB_ACCOUNT/$REPOSITORY_NAME"
+CANCEL_STATUSES="in_progress queued requested waiting pending"
+
+is_cancel_status() {
+  local candidate="$1"
+  local status
+  for status in $CANCEL_STATUSES; do
+    [[ "$candidate" == "$status" ]] && return 0
+  done
+  return 1
+}
+
+rerun_tolerating_non_retriable() {
+  local run_id="$1"
+  local output
+  if output=$(gh api --method POST "/repos/$REPO/actions/runs/$run_id/rerun" 2>&1); then
+    echo "Re-ran workflow run $run_id"
+  elif echo "$output" | grep -q "cannot be retried"; then
+    echo "Skipping non-retriable workflow run $run_id"
+  else
+    echo "ERROR: failed to re-run workflow run $run_id:"
+    echo "$output"
+    exit 1
+  fi
+}
+
+WORKFLOW_IDS=$(gh api "/repos/$REPO/actions/workflows" \
+  --jq '.workflows[] | select((.path // "") | startswith("dynamic/") | not) | .id')
+
+if [[ -z "$WORKFLOW_IDS" ]]; then
+  echo "No workflows found for $REPO; nothing to run."
+  return
+fi
+
+for workflow_id in $WORKFLOW_IDS; do
+  RUNS=$(gh api "/repos/$REPO/actions/workflows/$workflow_id/runs" \
+    --jq '.workflow_runs[] | "\(.id) \(.status) \(.conclusion)"')
+
+  while read -r run_id status conclusion; do
+    [[ -z "$run_id" ]] && continue
+
+    if is_cancel_status "$status"; then
+      echo "Cancelling in-progress run $run_id (status=$status)"
+      gh api --method POST "/repos/$REPO/actions/runs/$run_id/cancel" >/dev/null 2>&1 || true
+
+      attempts=0
+      while (( attempts < 30 )); do
+        sleep 2
+        current=$(gh api "/repos/$REPO/actions/runs/$run_id" --jq '.status' 2>/dev/null)
+        is_cancel_status "$current" || break
+        attempts=$((attempts + 1))
+      done
+
+      rerun_tolerating_non_retriable "$run_id"
+    elif { [[ "$status" == "completed" && "$conclusion" != "success" ]] || [[ "$status" == "failure" ]]; }; then
+      echo "Re-running finished/failed run $run_id (status=$status conclusion=$conclusion)"
+      rerun_tolerating_non_retriable "$run_id"
+    fi
+  done <<< "$RUNS"
+done
+
+echo "Finished ensuring CI runs for $REPO"
