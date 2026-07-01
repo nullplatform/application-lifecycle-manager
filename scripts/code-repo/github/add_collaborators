@@ -1,0 +1,25 @@
+#!/bin/bash
+
+echo "$CODE_REPOSITORY_COLLABORATORS" | jq -c '.[]?' | while read -r collaborator; do
+  id=$(echo "$collaborator" | jq -r '.id')
+  role=$(echo "$collaborator" | jq -r '.role')
+  type=$(echo "$collaborator" | jq -r '.type')
+
+  if [[ "$type" == "user" ]]; then
+    echo "Adding user '$id' with permission '$role'"
+    if ! gh api --method PUT "/repos/$GITHUB_ACCOUNT/$REPOSITORY_NAME/collaborators/$id" \
+      -f permission="$role"; then
+      echo "Warning: failed to add user '$id'"
+    fi
+  elif [[ "$type" == "team" ]]; then
+    echo "Adding team '$id' with permission '$role'"
+    if ! gh api --method PUT "/orgs/$GITHUB_ACCOUNT/teams/$id/repos/$GITHUB_ACCOUNT/$REPOSITORY_NAME" \
+      -f permission="$role"; then
+      echo "Warning: failed to add team '$id'"
+    fi
+  else
+    echo "Warning: unknown collaborator type '$type' for '$id'"
+  fi
+done
+
+echo "Finished adding collaborators"
