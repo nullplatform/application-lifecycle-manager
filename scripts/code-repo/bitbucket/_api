@@ -1,0 +1,109 @@
+#!/bin/bash
+#
+# Shared Bitbucket Cloud REST helpers. Sourced by the step scripts in this
+# directory; the leading underscore marks it as "not a workflow step".
+#
+# IMPORTANT -- every script in this repository is SOURCED by
+# `np service workflow exec`, not executed. (Proof: gitlab/create_repository
+# uses a bare top-level `return`, and none of these files carry an executable
+# bit.) Consequences:
+#
+#   * NEVER `set -euo pipefail` here. It would leak into the workflow shell and
+#     silently change the behaviour of every later step.
+#   * `exit 1` aborts the sourcing shell -- that IS how a step fails the
+#     workflow, and entrypoint then reports "failed" back to nullplatform.
+#   * `return` skips the rest of a step without failing the workflow.
+#
+# Auth is resolved once, in build_context, which exports a single bearer token
+# as BITBUCKET_TOKEN (from either a Workspace Access Token or a minted OAuth 2LO
+# token). Nothing else in this directory knows or cares which.
+
+# bb_api METHOD PATH [BODY]
+#
+# Calls the Bitbucket REST API and sets BB_HTTP_CODE and BB_BODY. It never
+# fails: every caller branches on the status code, because for Bitbucket the
+# code is the meaning (404 = "free" on one endpoint, "never enabled" on
+# another; 409 = "exists"; 401 != "missing").
+bb_api() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
+
+  local tmp
+  tmp=$(mktemp)
+
+  local args=(
+    -s
+    -o "$tmp"
+    -w '%{http_code}'
+    -X "$method"
+    -H "Authorization: Bearer ${BITBUCKET_TOKEN}"
+    -H "Content-Type: application/json"
+  )
+
+  if [[ -n "$body" ]]; then
+    args+=(--data "$body")
+  fi
+
+  BB_HTTP_CODE=$(curl "${args[@]}" "${BITBUCKET_API_BASE}${path}")
+  BB_BODY=$(cat "$tmp")
+
+  rm -f "$tmp"
+}
+
+# bb_encode_uuid VALUE
+#
+# Bitbucket returns UUIDs with LITERAL braces -- {9484702e-...} -- and they must
+# be percent-encoded before use as a path parameter.
+bb_encode_uuid() {
+  local value="$1"
+
+  value="${value//\{/%7B}"
+  value="${value//\}/%7D}"
+
+  printf '%s' "$value"
+}
+
+# bb_scrub
+#
+# stdin filter that redacts the bearer token. git prints credentialed remote
+# URLs verbatim on failure, so every byte of git output goes through this.
+bb_scrub() {
+  if [[ -z "${BITBUCKET_TOKEN:-}" ]]; then
+    cat
+    return
+  fi
+
+  local escaped
+  # Escape regex metacharacters (including /) so any token value is literal.
+  escaped=$(printf '%s' "$BITBUCKET_TOKEN" | sed -e 's/[]\/$*.^[]/\\&/g')
+
+  sed -e "s/${escaped}/***/g"
+}
+
+# bb_git ARGS...
+#
+# Runs git with the terminal prompt disabled, scrubbing the token out of its
+# output, and returns GIT's exit status -- not sed's. (A naive
+# `git ... | bb_scrub` would always look successful, because a pipeline's status
+# is its LAST command. We cannot use `set -o pipefail` to fix that: see the
+# header.)
+bb_git() {
+  local output
+  local status
+
+  output=$(GIT_TERMINAL_PROMPT=0 git "$@" 2>&1)
+  status=$?
+
+  if [[ -n "$output" ]]; then
+    printf '%s\n' "$output" | bb_scrub
+  fi
+
+  return $status
+}
+
+# bb_fail MESSAGE...
+bb_fail() {
+  echo "Error: $*" >&2
+  exit 1
+}

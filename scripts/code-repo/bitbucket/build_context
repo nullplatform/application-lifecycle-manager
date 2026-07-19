@@ -1,0 +1,178 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/code-repo/bitbucket/_api
+source "$CURRENT_DIR/_api"
+
+# --- workspace -------------------------------------------------------------
+
+if [[ -n "${BITBUCKET_WORKSPACE:-}" ]]; then
+  echo "Using BITBUCKET_WORKSPACE from environment: $BITBUCKET_WORKSPACE"
+else
+  BITBUCKET_WORKSPACE=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.workspace // empty')
+  echo "No BITBUCKET_WORKSPACE in environment, using value from platform: $BITBUCKET_WORKSPACE"
+fi
+
+if [[ -z "$BITBUCKET_WORKSPACE" ]]; then
+  bb_fail "BITBUCKET_WORKSPACE is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.workspace) or in the environment."
+fi
+
+# --- installation URL and API base -----------------------------------------
+
+if [[ -n "${BITBUCKET_INSTALLATION_URL:-}" ]]; then
+  echo "Using BITBUCKET_INSTALLATION_URL from environment: $BITBUCKET_INSTALLATION_URL"
+else
+  BITBUCKET_INSTALLATION_URL=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_url // empty')
+  echo "No BITBUCKET_INSTALLATION_URL in environment, using value from platform: $BITBUCKET_INSTALLATION_URL"
+fi
+
+if [[ -z "$BITBUCKET_INSTALLATION_URL" ]]; then
+  BITBUCKET_INSTALLATION_URL="https://bitbucket.org"
+  echo "No installation_url configured, defaulting to: $BITBUCKET_INSTALLATION_URL"
+fi
+
+# Strip any trailing slash so the URLs we build never double up.
+BITBUCKET_INSTALLATION_URL="${BITBUCKET_INSTALLATION_URL%/}"
+
+# Bitbucket Cloud serves its REST API from a DIFFERENT host than the web UI.
+# Keeping this a separate variable is the seam a future Data Center flavor would
+# use (DC serves REST 1.0 from <installation_url>/rest/api/1.0).
+if [[ -z "${BITBUCKET_API_BASE:-}" ]]; then
+  BITBUCKET_API_BASE="https://api.bitbucket.org/2.0"
+fi
+
+BITBUCKET_API_BASE="${BITBUCKET_API_BASE%/}"
+
+# --- auth ------------------------------------------------------------------
+#
+# Two first-class mechanisms (ADR-2). Bitbucket app passwords are REMOVED as of
+# 2026-07-28 and are deliberately not supported. This block is the only place in
+# the provider that knows which mechanism is in use: it resolves both down to a
+# single bearer token, BITBUCKET_TOKEN.
+
+if [[ -n "${BITBUCKET_AUTH_METHOD:-}" ]]; then
+  echo "Using BITBUCKET_AUTH_METHOD from environment: $BITBUCKET_AUTH_METHOD"
+else
+  BITBUCKET_AUTH_METHOD=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.auth_method // empty')
+  echo "No BITBUCKET_AUTH_METHOD in environment, using value from platform: $BITBUCKET_AUTH_METHOD"
+fi
+
+if [[ -z "$BITBUCKET_AUTH_METHOD" ]]; then
+  BITBUCKET_AUTH_METHOD="workspace_access_token"
+  echo "No auth_method configured, defaulting to: $BITBUCKET_AUTH_METHOD"
+fi
+
+case "$BITBUCKET_AUTH_METHOD" in
+  workspace_access_token)
+    # The exact analogue of a GitLab group access token: workspace-scoped, not
+    # tied to a human, long-lived. REQUIRES BITBUCKET PREMIUM.
+    if [[ -n "${BITBUCKET_TOKEN:-}" ]]; then
+      echo "Using BITBUCKET_TOKEN from environment (hidden)"
+    else
+      BITBUCKET_TOKEN=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.access_token // empty')
+      echo "No BITBUCKET_TOKEN in environment, using the workspace access token from platform (hidden)"
+    fi
+
+    if [[ -z "$BITBUCKET_TOKEN" ]]; then
+      bb_fail "auth_method is 'workspace_access_token' but no token is configured on the bitbucket-configuration provider (.attributes.setup.access_token). Note that workspace access tokens require Bitbucket Premium -- if this workspace is not on Premium, set auth_method to 'oauth2'."
+    fi
+    ;;
+
+  oauth2)
+    # OAuth 2.0 consumer, client_credentials (2LO). Works on ALL Bitbucket
+    # plans. The token represents the consumer's owner -- the workspace -- not
+    # an employee, so it survives staff turnover.
+    #
+    # LIFETIME: the token lives 2 hours and this grant returns NO refresh token
+    # (you re-mint from the long-lived key/secret). An ALM run is a single
+    # application-creation hook -- seconds to low minutes -- so we mint exactly
+    # ONCE, here, and never refresh. That is deliberate: a cache or a refresh
+    # loop would be YAGNI. Accepted consequence: a run lasting >2h would fail
+    # with 401 partway through. If that ever becomes real, re-mint inside bb_api
+    # on a 401 rather than building a background refresher.
+    OAUTH_KEY="${BITBUCKET_OAUTH_KEY:-}"
+    OAUTH_SECRET="${BITBUCKET_OAUTH_SECRET:-}"
+
+    if [[ -z "$OAUTH_KEY" ]]; then
+      OAUTH_KEY=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.oauth_key // empty')
+    fi
+
+    if [[ -z "$OAUTH_SECRET" ]]; then
+      OAUTH_SECRET=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.oauth_secret // empty')
+    fi
+
+    if [[ -z "$OAUTH_KEY" || -z "$OAUTH_SECRET" ]]; then
+      bb_fail "auth_method is 'oauth2' but oauth_key/oauth_secret are not configured on the bitbucket-configuration provider (.attributes.setup.oauth_key, .attributes.setup.oauth_secret)."
+    fi
+
+    echo "Minting a Bitbucket OAuth 2.0 access token (client_credentials) for workspace: $BITBUCKET_WORKSPACE"
+
+    OAUTH_RESPONSE=$(curl -s -u "${OAUTH_KEY}:${OAUTH_SECRET}" \
+      -X POST "${BITBUCKET_INSTALLATION_URL}/site/oauth2/access_token" \
+      -d grant_type=client_credentials)
+
+    BITBUCKET_TOKEN=$(echo "$OAUTH_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
+
+    if [[ -z "$BITBUCKET_TOKEN" ]]; then
+      # Never echo OAUTH_RESPONSE wholesale -- on success it contains the token.
+      bb_fail "Could not mint an OAuth token for workspace '$BITBUCKET_WORKSPACE'. Bitbucket said: $(echo "$OAUTH_RESPONSE" | jq -r '.error_description // .error // "unknown error"' 2>/dev/null)"
+    fi
+
+    echo "Minted an OAuth access token (hidden), expires in $(echo "$OAUTH_RESPONSE" | jq -r '.expires_in // "?"')s"
+    ;;
+
+  *)
+    bb_fail "Unsupported auth_method '$BITBUCKET_AUTH_METHOD'. Expected 'workspace_access_token' or 'oauth2'. (Bitbucket app passwords were removed on 2026-07-28 and are not supported.)"
+    ;;
+esac
+
+# --- project key -----------------------------------------------------------
+#
+# Effectively MANDATORY. Omit project.key when creating a repository and
+# Bitbucket does not error -- it SILENTLY files the repo under the workspace's
+# OLDEST project. Refuse to run rather than mis-file the customer's repository.
+
+if [[ -n "${BITBUCKET_PROJECT_KEY:-}" ]]; then
+  echo "Using BITBUCKET_PROJECT_KEY from environment: $BITBUCKET_PROJECT_KEY"
+else
+  BITBUCKET_PROJECT_KEY=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.project_key // empty')
+  echo "No BITBUCKET_PROJECT_KEY in environment, using value from platform: $BITBUCKET_PROJECT_KEY"
+fi
+
+if [[ -z "$BITBUCKET_PROJECT_KEY" ]]; then
+  bb_fail "BITBUCKET_PROJECT_KEY is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.project_key) or in the environment. It cannot be omitted: Bitbucket would silently assign the new repository to the oldest project in the workspace."
+fi
+
+# --- repository slug -------------------------------------------------------
+#
+# REPOSITORY_NAME is `basename "$REPOSITORY_URL"` (see
+# scripts/code-repo/create_code_repository), so it may carry a .git suffix and
+# arbitrary case. Bitbucket slugifies the name it is given: send "My-Service"
+# and the repository is created at .../my-service, so links.html.href would come
+# back different from what we asked for -- and Contract A (core-entities matches
+# repository_url by EXACT string) would break. Normalise here, once.
+
+REPOSITORY_SLUG="${REPOSITORY_NAME%.git}"
+REPOSITORY_SLUG=$(echo "$REPOSITORY_SLUG" | tr '[:upper:]' '[:lower:]')
+
+if [[ -z "$REPOSITORY_SLUG" ]]; then
+  bb_fail "Could not derive a repository slug from REPOSITORY_NAME='$REPOSITORY_NAME'"
+fi
+
+if [[ "$REPOSITORY_SLUG" != "$REPOSITORY_NAME" ]]; then
+  echo "Normalised repository name '$REPOSITORY_NAME' to Bitbucket slug '$REPOSITORY_SLUG'"
+fi
+
+echo "Bitbucket workspace:  $BITBUCKET_WORKSPACE"
+echo "Bitbucket project:    $BITBUCKET_PROJECT_KEY"
+echo "Bitbucket repository: $REPOSITORY_SLUG"
+echo "Bitbucket auth:       $BITBUCKET_AUTH_METHOD"
+
+export BITBUCKET_TOKEN
+export BITBUCKET_AUTH_METHOD
+export BITBUCKET_WORKSPACE
+export BITBUCKET_PROJECT_KEY
+export BITBUCKET_INSTALLATION_URL
+export BITBUCKET_API_BASE
+export REPOSITORY_SLUG

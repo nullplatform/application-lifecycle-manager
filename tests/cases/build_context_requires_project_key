@@ -1,0 +1,20 @@
+#!/bin/bash
+# project.key is effectively mandatory: omit it on create and Bitbucket SILENTLY
+# files the repo under the workspace's OLDEST project. Fail early and loudly
+# rather than mis-file the customer's repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+clear_context
+
+export REPOSITORY_NAME="my-service"
+export CODE_REPOSITORY='{"attributes":{"setup":{
+  "auth_method":"workspace_access_token",
+  "workspace":"acme",
+  "access_token":"wat-token"
+}}}'
+
+run_step build_context
+
+assert_status 1 || exit 1
+assert_contains "BITBUCKET_PROJECT_KEY is not set" || exit 1
