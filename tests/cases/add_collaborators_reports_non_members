@@ -1,0 +1,17 @@
+#!/bin/bash
+# ADR-3: we cannot invite anyone to the workspace. Fail loudly and name them.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_COLLABORATORS='[{"id":"{aaaa-bbbb}","role":"developer","type":"user"}]'
+
+fixture PUT "/repositories/acme/my-service/permissions-config/users/%7Baaaa-bbbb%7D" 404 \
+  '{"type":"error","error":{"message":"Not found"}}'
+
+run_step add_collaborators
+
+assert_status 1 || exit 1
+assert_contains "not members of the 'acme' Bitbucket workspace" || exit 1
+assert_contains "{aaaa-bbbb}" || exit 1
+assert_contains "workspace/settings/members" || exit 1
