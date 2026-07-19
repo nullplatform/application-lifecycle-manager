@@ -1,0 +1,45 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export TEMPLATE_URL="https://github.com/nullplatform/technology-templates-nodejs"
+export REPOSITORY_URL="https://bitbucket.org/acme/my-service"
+
+# Bitbucket answers repository creation with 200, NOT 201. links.clone[] carries
+# a .git suffix and may embed userinfo; links.html.href is the canonical URL.
+fixture POST "/repositories/acme/my-service" 200 '{
+  "links": {
+    "html":  {"href": "https://bitbucket.org/acme/my-service"},
+    "clone": [{"name": "https", "href": "https://acme@bitbucket.org/acme/my-service.git"}]
+  }
+}'
+
+url=$(capture_export create_repository BITBUCKET_REPOSITORY_URL)
+
+if [[ "$url" != "https://bitbucket.org/acme/my-service" ]]; then
+  echo "  FAIL: expected the canonical links.html.href, got '$url'"
+  exit 1
+fi
+
+run_step create_repository
+assert_status 0 || exit 1
+
+# project.key must be sent, or Bitbucket silently files the repo under the
+# workspace's OLDEST project.
+body=$(request_body POST "/repositories/acme/my-service")
+
+if [[ "$(echo "$body" | jq -r '.project.key')" != "APP" ]]; then
+  echo "  FAIL: create body did not carry project.key=APP -- got: $body"
+  exit 1
+fi
+
+if [[ "$(echo "$body" | jq -r '.is_private')" != "true" ]]; then
+  echo "  FAIL: repository was not created private -- got: $body"
+  exit 1
+fi
+
+# ADR-1: there is no import API, so the template is seeded by git clone + push.
+assert_called_git "clone" || exit 1
+assert_called_git "push" || exit 1

@@ -1,0 +1,155 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/code-repo/bitbucket/_api
+source "$CURRENT_DIR/_api"
+
+if [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
+  echo "Strategy is set to 'import'. Skipping repo creation."
+  return
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  bb_fail "git is required to seed a Bitbucket repository from a template (Bitbucket Cloud has no import API) but it was not found on PATH."
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Create the (empty) repository.
+#
+# project.key is not optional in practice: omit it and Bitbucket does not error,
+# it silently files the repository under the workspace's OLDEST project.
+# ---------------------------------------------------------------------------
+
+CREATE_REPO_BODY=$(jq -nc \
+  --arg project_key "$BITBUCKET_PROJECT_KEY" \
+  '{scm: "git", is_private: true, fork_policy: "no_forks", project: {key: $project_key}}')
+
+echo "Creating repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} with body: "
+echo "$CREATE_REPO_BODY" | jq .
+
+bb_api POST "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}" "$CREATE_REPO_BODY"
+
+# Bitbucket answers repository creation with 200, not the 201 you would expect.
+# 201 is accepted defensively in case that is ever corrected.
+if [[ "$BB_HTTP_CODE" != "200" && "$BB_HTTP_CODE" != "201" ]]; then
+  bb_fail "Error creating repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} (HTTP $BB_HTTP_CODE): $BB_BODY"
+fi
+
+# Contract A: the canonical repository_url is exactly what the API returned in
+# links.html.href -- https://bitbucket.org/{workspace}/{slug}, no .git, no
+# trailing slash. NEVER synthesise it, and NEVER read links.clone[]: that
+# array's https entry carries .git and may embed userinfo, and its order is not
+# contractual.
+BITBUCKET_REPOSITORY_URL=$(echo "$BB_BODY" | jq -r '.links.html.href // empty')
+
+if [[ -z "$BITBUCKET_REPOSITORY_URL" ]]; then
+  bb_fail "Bitbucket did not return links.html.href for the new repository: $BB_BODY"
+fi
+
+# We push the seed commit to 'main' below, which makes it the default branch.
+BITBUCKET_MAIN_BRANCH="main"
+
+echo "Repository created: $BITBUCKET_REPOSITORY_URL"
+
+# ---------------------------------------------------------------------------
+# 2. Seed from the template (ADR-1).
+#
+# Bitbucket Cloud has NO import-from-URL API, and forking is dead (cross-
+# workspace forks were removed on 2026-07-01; same-workspace forks carry an
+# undetachable parent link). A real git clone + push is the only full-fidelity
+# option -- and here in ALM we are already in bash with git and a working tree,
+# so it is also the natural one.
+#
+# We squash to a single root commit so the customer's repository does not
+# inherit nullplatform's template history: clone --depth 1, drop .git, re-init.
+# ---------------------------------------------------------------------------
+
+if [[ -z "${TEMPLATE_URL:-}" || "$TEMPLATE_URL" == "null" ]]; then
+  echo "No TEMPLATE_URL set (the application has no template_id); leaving $BITBUCKET_REPOSITORY_URL empty."
+else
+  # The literal string 'x-token-auth' is required by Bitbucket. It works for
+  # both a workspace access token and a minted OAuth 2LO token.
+  PUSH_URL="https://x-token-auth:${BITBUCKET_TOKEN}@bitbucket.org/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}.git"
+
+  CLONE_URL="$TEMPLATE_URL"
+
+  # A template hosted in Bitbucket is private, so cloning it needs the same
+  # token. A template on GitHub (the usual case) is public and needs none.
+  if [[ "$TEMPLATE_URL" == "https://bitbucket.org/"* ]]; then
+    TEMPLATE_PATH="${TEMPLATE_URL#https://bitbucket.org/}"
+    TEMPLATE_PATH="${TEMPLATE_PATH%.git}"
+    CLONE_URL="https://x-token-auth:${BITBUCKET_TOKEN}@bitbucket.org/${TEMPLATE_PATH}.git"
+  fi
+
+  SEED_DIR=$(mktemp -d)
+
+  echo "Seeding $BITBUCKET_REPOSITORY_URL from template $TEMPLATE_URL"
+
+  if ! bb_git clone --depth 1 "$CLONE_URL" "$SEED_DIR"; then
+    rm -rf "$SEED_DIR"
+    bb_fail "Failed to clone the template $TEMPLATE_URL"
+  fi
+
+  # Drop the template's history entirely.
+  rm -rf "${SEED_DIR:?}/.git"
+
+  if ! bb_git -C "$SEED_DIR" init; then
+    rm -rf "$SEED_DIR"
+    bb_fail "Failed to initialise the seed repository"
+  fi
+
+  if ! bb_git -C "$SEED_DIR" add -A; then
+    rm -rf "$SEED_DIR"
+    bb_fail "Failed to stage the template files"
+  fi
+
+  # The agent container has no git identity configured, so pass one inline
+  # rather than mutating global git config.
+  if ! bb_git -C "$SEED_DIR" \
+    -c user.email="ci@nullplatform.com" \
+    -c user.name="nullplatform" \
+    commit -m "Initial commit from template"; then
+    rm -rf "$SEED_DIR"
+    bb_fail "Failed to create the initial commit"
+  fi
+
+  # Push HEAD to an explicit ref, so the local branch name (which varies with
+  # the git version's init.defaultBranch) does not matter. This is the first ref
+  # in the repo, so Bitbucket makes it the default branch.
+  if ! bb_git -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"; then
+    rm -rf "$SEED_DIR"
+    bb_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL"
+  fi
+
+  rm -rf "$SEED_DIR"
+
+  echo "Template pushed to $BITBUCKET_REPOSITORY_URL ($BITBUCKET_MAIN_BRANCH)"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Contract A reconciliation.
+#
+# core-entities stores repository_url verbatim and resolves an application by an
+# EXACT string match -- no normalisation, no .git stripping, no lower-casing. If
+# the URL the application was created with is not byte-identical to the one
+# Bitbucket just gave us (Bitbucket slugifies and lower-cases), then a later
+# `np build start` fails with "could not get the app". Fix it now, while we
+# still know both values.
+# ---------------------------------------------------------------------------
+
+if [[ "$REPOSITORY_URL" != "$BITBUCKET_REPOSITORY_URL" ]]; then
+  echo "Application repository_url ('$REPOSITORY_URL') differs from the canonical Bitbucket URL ('$BITBUCKET_REPOSITORY_URL'). Updating application $APPLICATION_ID."
+
+  UPDATE_BODY=$(jq -nc --arg url "$BITBUCKET_REPOSITORY_URL" '{repository_url: $url}')
+
+  if ! np application update --id "$APPLICATION_ID" --body "$UPDATE_BODY" --format json >/dev/null; then
+    bb_fail "Failed to update application $APPLICATION_ID with the canonical repository_url $BITBUCKET_REPOSITORY_URL. Builds would fail to resolve the application."
+  fi
+
+  REPOSITORY_URL="$BITBUCKET_REPOSITORY_URL"
+  export REPOSITORY_URL
+fi
+
+export BITBUCKET_REPOSITORY_URL
+export BITBUCKET_MAIN_BRANCH
