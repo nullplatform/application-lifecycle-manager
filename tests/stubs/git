@@ -1,0 +1,18 @@
+#!/bin/bash
+# `git` stub: records the invocation and fakes a clone.
+
+printf 'git\t%s\n' "$*" >> "$BB_CALLS"
+
+# Emulate `git clone --depth 1 <url> <dir>`: create_repository expects the
+# target directory to exist and hold the template's files afterwards.
+if [[ "$1" == "clone" ]]; then
+  target=""
+  for arg in "$@"; do
+    target="$arg"
+  done
+
+  mkdir -p "$target/.git"
+  echo "template" > "$target/README.md"
+fi
+
+exit 0
