@@ -45,7 +45,11 @@ bb_api() {
     args+=(--data "$body")
   fi
 
+  # BB_HTTP_CODE and BB_BODY are the outputs of bb_api: they are read by the
+  # step scripts that source this file, so they are not unused here.
+  # shellcheck disable=SC2034
   BB_HTTP_CODE=$(curl "${args[@]}" "${BITBUCKET_API_BASE}${path}")
+  # shellcheck disable=SC2034
   BB_BODY=$(cat "$tmp")
 
   rm -f "$tmp"

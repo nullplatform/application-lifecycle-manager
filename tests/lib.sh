@@ -70,6 +70,7 @@ fixture_seq() {
 run_step() {
   local step="$1"
 
+  # shellcheck disable=SC1090
   STEP_OUTPUT=$(cd "$REPO_ROOT" && source "scripts/code-repo/bitbucket/$step" 2>&1)
   STEP_STATUS=$?
 }
