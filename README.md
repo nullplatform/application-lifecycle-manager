@@ -35,7 +35,7 @@ When an application is created, this service coordinates two main tasks:
 
 You must configure your code repository provider through **nullplatform platform settings** or the **nullplatform Terraform provider**.
 
-> **Note:** This repository supports **GitLab** and **GitHub** code repositories.
+> **Note:** This repository supports **GitLab**, **GitHub** and **Bitbucket Cloud** code repositories.
 
 The provider to use is taken from `CODE_REPOSITORY_PROVIDER`, or from the nullplatform account's
 `repository_provider` when that variable is not set. The matching configuration is then selected by
@@ -45,6 +45,34 @@ without them interfering. If you configured a **custom** provider specification,
 
 `azure-devops` is recognized by the lookup but its scripts are not implemented yet, so selecting it
 fails immediately with an explicit message instead of part-way through the workflow.
+
+> **Note:** This repository supports **GitLab** and **Bitbucket Cloud** repositories.
+
+#### Bitbucket Cloud
+
+Configure a `bitbucket-configuration` code-repository provider with:
+
+| Attribute | Required | Notes |
+|---|---|---|
+| `setup.workspace` | yes | The Bitbucket workspace slug. |
+| `setup.project_key` | yes | The key of the project new repositories are filed under. **Not optional**: omit it and Bitbucket silently assigns the repository to the workspace's oldest project. |
+| `setup.auth_method` | yes | `workspace_access_token` or `oauth2`. |
+| `setup.access_token` | when `auth_method` is `workspace_access_token` | A Workspace Access Token. **Requires Bitbucket Premium.** It cannot be minted via API — a workspace admin creates it in the Bitbucket UI and pastes it here. Scopes: `repository:admin`, `repository:write`, `pipeline:write`, `pipeline:variable`, `webhook`. |
+| `setup.oauth_key` / `setup.oauth_secret` | when `auth_method` is `oauth2` | An OAuth 2.0 consumer using the `client_credentials` grant. Works on **all** Bitbucket plans. The token represents the workspace, not an individual. |
+| `setup.installation_url` | no | Defaults to `https://bitbucket.org`. |
+| `access.default_collaborators` | no | See the limitation below. |
+
+> **Bitbucket app passwords are not supported.** Atlassian removed them on 2026-07-28.
+
+**Limitation — collaborators must already be workspace members.** Bitbucket has no API to
+invite a user to a workspace, so `add_collaborators` can only *grant repository permissions* to
+principals who are already members. If a configured collaborator is not a member, repository
+creation fails with an error naming them; a workspace administrator must invite them first.
+
+**Limitation — no template import API.** Bitbucket Cloud cannot import a repository from a URL,
+and forking is no longer usable. Templates are therefore seeded with a real `git clone` + `git
+push`, squashed to a single initial commit. **`git` must be available on the agent host.**
+>>>>>>> 54b48a2 (feat(code-repo): emit NULLPLATFORM_API_KEY and document bitbucket)
 
 #### Workflow
 

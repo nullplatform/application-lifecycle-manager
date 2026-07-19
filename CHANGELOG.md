@@ -11,6 +11,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
 - `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment flags to skip code or asset
   repository creation independently. Both default to enabled, so existing behavior is unchanged.
+- Bitbucket Cloud code repository support (`scripts/code-repo/bitbucket`), with both
+    Workspace Access Token and OAuth 2.0 `client_credentials` authentication.
 
 ### Changed
 - The `ci` API key is now stored in the created repository as `NULLPLATFORM_API_KEY`, the name the
