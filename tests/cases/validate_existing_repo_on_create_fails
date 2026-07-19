@@ -1,0 +1,14 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+
+fixture GET "/repositories/acme/my-service" 200 \
+  '{"links":{"html":{"href":"https://bitbucket.org/acme/my-service"}},"mainbranch":{"name":"main"}}'
+
+run_step validate_repository_does_not_exist
+
+assert_status 1 || exit 1
+assert_contains "already exists but strategy is set to 'create'" || exit 1

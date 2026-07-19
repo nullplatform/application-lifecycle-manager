@@ -1,0 +1,14 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+
+fixture GET "/repositories/acme/my-service" 404 '{"type":"error"}'
+
+run_step validate_repository_does_not_exist
+
+assert_status 0 || exit 1
+assert_called GET "/repositories/acme/my-service" || exit 1
+assert_contains "Repository does not exist and strategy is set to 'create'" || exit 1

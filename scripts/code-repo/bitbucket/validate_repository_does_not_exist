@@ -1,0 +1,51 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/code-repo/bitbucket/_api
+source "$CURRENT_DIR/_api"
+
+echo "Checking if repository exists: ${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}"
+
+bb_api GET "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}"
+
+case "$BB_HTTP_CODE" in
+  200)
+    REPOSITORY_EXISTS="true"
+    ;;
+  404)
+    # 404 is the ONLY response that means "this slug is free".
+    REPOSITORY_EXISTS="false"
+    ;;
+  401 | 403)
+    bb_fail "Bitbucket rejected the credentials (HTTP $BB_HTTP_CODE) while checking ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}. This is NOT 'repository does not exist'. Check the ${BITBUCKET_AUTH_METHOD} credentials and that they carry the repository:admin scope. Response: $BB_BODY"
+    ;;
+  *)
+    bb_fail "Unexpected response from Bitbucket (HTTP $BB_HTTP_CODE) while checking ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}. Response: $BB_BODY"
+    ;;
+esac
+
+if [[ "$REPOSITORY_EXISTS" == "true" ]]; then
+  if [[ "$CODE_REPOSITORY_STRATEGY" == "create" ]]; then
+    bb_fail "Repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} already exists but strategy is set to 'create'. Please use a different repository name or change strategy to 'import'."
+  fi
+
+  # Contract A: take the canonical URL from links.html.href. Never synthesise
+  # it, and never read links.clone[] -- that array's https entry carries a .git
+  # suffix and has historically embedded userinfo.
+  BITBUCKET_REPOSITORY_URL=$(echo "$BB_BODY" | jq -r '.links.html.href // empty')
+  BITBUCKET_MAIN_BRANCH=$(echo "$BB_BODY" | jq -r '.mainbranch.name // "main"')
+
+  if [[ -z "$BITBUCKET_REPOSITORY_URL" ]]; then
+    bb_fail "Bitbucket did not return links.html.href for ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}: $BB_BODY"
+  fi
+
+  export BITBUCKET_REPOSITORY_URL
+  export BITBUCKET_MAIN_BRANCH
+
+  echo "Repository found ($BITBUCKET_REPOSITORY_URL, default branch '$BITBUCKET_MAIN_BRANCH') and strategy is set to 'import'. Proceeding with import configuration..."
+elif [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
+  bb_fail "Repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} does not exist but strategy is set to 'import'. Please create the repository first or change strategy to 'create'."
+else
+  echo "Repository does not exist and strategy is set to 'create'. Proceeding with repository creation..."
+fi
