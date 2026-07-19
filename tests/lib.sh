@@ -128,7 +128,12 @@ assert_called() {
 assert_called_git() {
   local subcommand="$1"
 
-  if ! grep -qE "^git	.*(^|[[:space:]])${subcommand}([[:space:]]|$)" "$BB_CALLS"; then
+  # Records are "git<TAB><args...>". Match the subcommand as a whitespace-
+  # delimited token anywhere in the args. The leading TAB is itself a boundary,
+  # so the first alternative matches a subcommand that comes immediately after
+  # it (clone, init, add), while `.*[[:space:]]` matches one that follows other
+  # args (push after `-C <dir>`).
+  if ! grep -qE "^git([[:space:]]|.*[[:space:]])${subcommand}([[:space:]]|$)" "$BB_CALLS"; then
     echo "  FAIL: expected a 'git $subcommand'. Calls made:"
     sed 's/^/    /' "$BB_CALLS"
     return 1
