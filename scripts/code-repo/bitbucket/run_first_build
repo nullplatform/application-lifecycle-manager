@@ -1,0 +1,82 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/code-repo/bitbucket/_api
+source "$CURRENT_DIR/_api"
+
+PIPELINES_CONFIG_PATH="/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines_config"
+
+BRANCH="${BITBUCKET_MAIN_BRANCH:-main}"
+
+# ---------------------------------------------------------------------------
+# 1. Enable Pipelines.
+#
+# Pipelines is OFF by default, even when bitbucket-pipelines.yml is present, so
+# nothing can be triggered until it is enabled. Enabling does NOT require the
+# yml to exist. The order is: enable -> (yml already pushed) -> trigger.
+#
+# GOTCHA: GET pipelines_config returns 404 when Pipelines was NEVER enabled on
+# the repository. That 404 does NOT mean the repository is missing.
+# ---------------------------------------------------------------------------
+
+bb_api GET "$PIPELINES_CONFIG_PATH"
+
+case "$BB_HTTP_CODE" in
+  200)
+    if [[ "$(echo "$BB_BODY" | jq -r '.enabled')" == "true" ]]; then
+      echo "Bitbucket Pipelines is already enabled"
+      PIPELINES_ENABLED="true"
+    else
+      PIPELINES_ENABLED="false"
+    fi
+    ;;
+  404)
+    echo "Bitbucket Pipelines has never been enabled on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}"
+    PIPELINES_ENABLED="false"
+    ;;
+  *)
+    bb_fail "Unexpected response reading the pipelines config of ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} (HTTP $BB_HTTP_CODE): $BB_BODY"
+    ;;
+esac
+
+if [[ "$PIPELINES_ENABLED" != "true" ]]; then
+  echo "Enabling Bitbucket Pipelines on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}"
+
+  bb_api PUT "$PIPELINES_CONFIG_PATH" '{"enabled": true}'
+
+  if [[ "$BB_HTTP_CODE" != "200" ]]; then
+    bb_fail "Could not enable Bitbucket Pipelines (HTTP $BB_HTTP_CODE): $BB_BODY"
+  fi
+
+  echo "Bitbucket Pipelines enabled"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Trigger the first build.
+#
+# Note the TRAILING SLASH on /pipelines/ -- the endpoint is spelled that way.
+# ---------------------------------------------------------------------------
+
+TRIGGER_BODY=$(jq -nc --arg branch "$BRANCH" \
+  '{target: {type: "pipeline_ref_target", ref_type: "branch", ref_name: $branch}}')
+
+echo "Triggering the first build on branch '$BRANCH'"
+
+bb_api POST "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/" "$TRIGGER_BODY"
+
+case "$BB_HTTP_CODE" in
+  200 | 201)
+    echo "Pipeline triggered successfully: build #$(echo "$BB_BODY" | jq -r '.build_number // "?"')"
+    ;;
+  400)
+    # Triggering when the branch has no bitbucket-pipelines.yml returns 400. An
+    # imported repository may legitimately not have one yet, and the application
+    # was created successfully either way -- so warn rather than fail the whole
+    # workflow. This matches the GitLab step's posture.
+    echo "Warning: Could not trigger the first build. Bitbucket rejected the request, which usually means branch '$BRANCH' has no bitbucket-pipelines.yml. Response: $BB_BODY"
+    ;;
+  *)
+    echo "Warning: Could not trigger the first build (HTTP $BB_HTTP_CODE): $BB_BODY"
+    ;;
+esac
