@@ -1,0 +1,115 @@
+#!/bin/bash
+#
+# Live end-to-end verification against a REAL, throwaway Bitbucket workspace.
+#
+# This is NOT part of `tests/run` and does NOT run in CI: it needs real
+# credentials and it creates real repositories. It is the only thing that proves
+# the API contracts this provider is built on (repo-create returns 200 not 201;
+# GET pipelines_config 404s before Pipelines is enabled; pipeline variables have
+# no upsert; and -- unvalidated until you run this -- that a 2LO token is
+# allowed to create a repository at all).
+#
+# Run it once per auth_method.
+#
+#   # Workspace Access Token (Bitbucket Premium):
+#   BITBUCKET_AUTH_METHOD=workspace_access_token \
+#   BITBUCKET_TOKEN=<wat> \
+#   BITBUCKET_WORKSPACE=np-scratch \
+#   BITBUCKET_PROJECT_KEY=SCRATCH \
+#   TEMPLATE_URL=https://github.com/nullplatform/technology-templates-nodejs \
+#   tests/smoke_bitbucket_live
+#
+#   # OAuth 2LO (all plans):
+#   BITBUCKET_AUTH_METHOD=oauth2 \
+#   BITBUCKET_OAUTH_KEY=<key> BITBUCKET_OAUTH_SECRET=<secret> \
+#   BITBUCKET_WORKSPACE=np-scratch \
+#   BITBUCKET_PROJECT_KEY=SCRATCH \
+#   TEMPLATE_URL=https://github.com/nullplatform/technology-templates-nodejs \
+#   tests/smoke_bitbucket_live
+#
+# Add KEEP=1 to skip the cleanup and inspect the repository afterwards.
+
+cd "$(dirname "$0")/.." || exit 1
+
+SLUG="${SMOKE_SLUG:-np-smoke-$(date +%s)}"
+
+# Stand in for the parts of the workflow context that create_code_repository and
+# generate_secrets would normally provide. We do NOT call generate_secrets here:
+# it would mint a real nullplatform CI api key.
+export CODE_REPOSITORY_STRATEGY="create"
+export REPOSITORY_NAME="$SLUG"
+export REPOSITORY_URL="https://bitbucket.org/${BITBUCKET_WORKSPACE}/${SLUG}"
+export CODE_REPOSITORY='{"attributes":{"setup":{},"access":{}}}'
+export CODE_REPOSITORY_COLLABORATORS='[]'
+export CODE_REPOSITORY_SECRETS='{"NULLPLATFORM_API_KEY":"smoke-test-value"}'
+export APPLICATION_ID="0"
+
+echo "=== smoke: ${BITBUCKET_WORKSPACE}/${SLUG} (auth: ${BITBUCKET_AUTH_METHOD}) ==="
+
+# Each step is sourced, exactly as the workflow engine does it. A step that
+# fails calls `exit 1`, which ends this script too -- which is the point.
+for step in build_context validate_repository_does_not_exist create_repository \
+  add_collaborators create_secrets run_first_build; do
+  echo ""
+  echo "--- $step ---"
+
+  # shellcheck disable=SC1090
+  source "scripts/code-repo/bitbucket/$step"
+done
+
+echo ""
+echo "--- assertions ---"
+
+# Contract A: the persisted URL must be exactly https://bitbucket.org/{ws}/{slug}
+# -- no .git, no trailing slash, no userinfo.
+EXPECTED="https://bitbucket.org/${BITBUCKET_WORKSPACE}/${SLUG}"
+
+if [[ "$BITBUCKET_REPOSITORY_URL" != "$EXPECTED" ]]; then
+  echo "FAIL: Contract A violated."
+  echo "  expected: $EXPECTED"
+  echo "  got:      $BITBUCKET_REPOSITORY_URL"
+  exit 1
+fi
+
+echo "ok  Contract A: $BITBUCKET_REPOSITORY_URL"
+
+# The template must actually be in the repo, as ONE root commit.
+COMMITS=$(curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+  "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}/commits/main" \
+  | jq '.values | length')
+
+if [[ "$COMMITS" != "1" ]]; then
+  echo "FAIL: expected exactly 1 commit on main (a squashed template), found: $COMMITS"
+  exit 1
+fi
+
+echo "ok  template seeded as a single root commit"
+
+# The credential must be stored secured (its value is then write-only).
+SECURED=$(curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+  "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}/pipelines_config/variables?pagelen=100" \
+  | jq -r '.values[] | select(.key == "NULLPLATFORM_API_KEY") | .secured')
+
+if [[ "$SECURED" != "true" ]]; then
+  echo "FAIL: NULLPLATFORM_API_KEY is not secured (got: '$SECURED')"
+  exit 1
+fi
+
+echo "ok  NULLPLATFORM_API_KEY stored with secured:true"
+
+if [[ -n "${KEEP:-}" ]]; then
+  echo ""
+  echo "KEEP set -- leaving $BITBUCKET_REPOSITORY_URL in place."
+  exit 0
+fi
+
+echo ""
+echo "--- cleanup ---"
+
+CLEANUP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+  -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+  "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}")
+
+echo "deleted ${BITBUCKET_WORKSPACE}/${SLUG} (HTTP $CLEANUP_CODE)"
+echo ""
+echo "=== smoke passed (auth: ${BITBUCKET_AUTH_METHOD}) ==="
