@@ -68,9 +68,10 @@ echo "Repository created: $BITBUCKET_REPOSITORY_URL"
 if [[ -z "${TEMPLATE_URL:-}" || "$TEMPLATE_URL" == "null" ]]; then
   echo "No TEMPLATE_URL set (the application has no template_id); leaving $BITBUCKET_REPOSITORY_URL empty."
 else
-  # The literal string 'x-token-auth' is required by Bitbucket. It works for
-  # both a workspace access token and a minted OAuth 2LO token.
-  PUSH_URL="https://x-token-auth:${BITBUCKET_TOKEN}@bitbucket.org/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}.git"
+  # For an Atlassian API token the git username MUST be the literal string
+  # 'x-bitbucket-api-token-auth' and the password is the token itself (the
+  # 'x-token-auth' form is for OAuth/access tokens and would fail auth here).
+  PUSH_URL="https://x-bitbucket-api-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}.git"
 
   CLONE_URL="$TEMPLATE_URL"
 
@@ -79,7 +80,7 @@ else
   if [[ "$TEMPLATE_URL" == "https://bitbucket.org/"* ]]; then
     TEMPLATE_PATH="${TEMPLATE_URL#https://bitbucket.org/}"
     TEMPLATE_PATH="${TEMPLATE_PATH%.git}"
-    CLONE_URL="https://x-token-auth:${BITBUCKET_TOKEN}@bitbucket.org/${TEMPLATE_PATH}.git"
+    CLONE_URL="https://x-bitbucket-api-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/${TEMPLATE_PATH}.git"
   fi
 
   SEED_DIR=$(mktemp -d)

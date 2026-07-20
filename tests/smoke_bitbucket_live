@@ -6,22 +6,15 @@
 # credentials and it creates real repositories. It is the only thing that proves
 # the API contracts this provider is built on (repo-create returns 200 not 201;
 # GET pipelines_config 404s before Pipelines is enabled; pipeline variables have
-# no upsert; and -- unvalidated until you run this -- that a 2LO token is
-# allowed to create a repository at all).
+# no upsert; and that the bot user's API token can enable Pipelines -- the one
+# thing an OAuth app or workspace token cannot do).
 #
-# Run it once per auth_method.
+# nullplatform authenticates with a single dedicated bot user's Atlassian API
+# token, over HTTP Basic (email:api_token). The bot user MUST have Bitbucket
+# two-step verification enabled or the Pipelines-enable step returns 403.
 #
-#   # Workspace Access Token (Bitbucket Premium):
-#   BITBUCKET_AUTH_METHOD=workspace_access_token \
-#   BITBUCKET_TOKEN=<wat> \
-#   BITBUCKET_WORKSPACE=np-scratch \
-#   BITBUCKET_PROJECT_KEY=SCRATCH \
-#   TEMPLATE_URL=https://github.com/nullplatform/technology-templates-nodejs \
-#   tests/smoke_bitbucket_live
-#
-#   # OAuth 2LO (all plans):
-#   BITBUCKET_AUTH_METHOD=oauth2 \
-#   BITBUCKET_OAUTH_KEY=<key> BITBUCKET_OAUTH_SECRET=<secret> \
+#   BITBUCKET_EMAIL=bot@nullplatform.com \
+#   BITBUCKET_API_TOKEN=<atlassian-api-token> \
 #   BITBUCKET_WORKSPACE=np-scratch \
 #   BITBUCKET_PROJECT_KEY=SCRATCH \
 #   TEMPLATE_URL=https://github.com/nullplatform/technology-templates-nodejs \
@@ -44,7 +37,7 @@ export CODE_REPOSITORY_COLLABORATORS='[]'
 export CODE_REPOSITORY_SECRETS='{"NULLPLATFORM_API_KEY":"smoke-test-value"}'
 export APPLICATION_ID="0"
 
-echo "=== smoke: ${BITBUCKET_WORKSPACE}/${SLUG} (auth: ${BITBUCKET_AUTH_METHOD}) ==="
+echo "=== smoke: ${BITBUCKET_WORKSPACE}/${SLUG} (bot user: ${BITBUCKET_EMAIL}) ==="
 
 # Each step is sourced, exactly as the workflow engine does it. A step that
 # fails calls `exit 1`, which ends this script too -- which is the point.
@@ -74,7 +67,7 @@ fi
 echo "ok  Contract A: $BITBUCKET_REPOSITORY_URL"
 
 # The template must actually be in the repo, as ONE root commit.
-COMMITS=$(curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+COMMITS=$(curl -s -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
   "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}/commits/main" \
   | jq '.values | length')
 
@@ -86,7 +79,7 @@ fi
 echo "ok  template seeded as a single root commit"
 
 # The credential must be stored secured (its value is then write-only).
-SECURED=$(curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+SECURED=$(curl -s -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
   "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}/pipelines_config/variables?pagelen=100" \
   | jq -r '.values[] | select(.key == "NULLPLATFORM_API_KEY") | .secured')
 
@@ -107,9 +100,9 @@ echo ""
 echo "--- cleanup ---"
 
 CLEANUP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
-  -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+  -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
   "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}")
 
 echo "deleted ${BITBUCKET_WORKSPACE}/${SLUG} (HTTP $CLEANUP_CODE)"
 echo ""
-echo "=== smoke passed (auth: ${BITBUCKET_AUTH_METHOD}) ==="
+echo "=== smoke passed (bot user: ${BITBUCKET_EMAIL}) ==="

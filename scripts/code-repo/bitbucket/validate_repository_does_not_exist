@@ -18,7 +18,7 @@ case "$BB_HTTP_CODE" in
     REPOSITORY_EXISTS="false"
     ;;
   401 | 403)
-    bb_fail "Bitbucket rejected the credentials (HTTP $BB_HTTP_CODE) while checking ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}. This is NOT 'repository does not exist'. Check the ${BITBUCKET_AUTH_METHOD} credentials and that they carry the repository:admin scope. Response: $BB_BODY"
+    bb_fail "Bitbucket rejected the credentials (HTTP $BB_HTTP_CODE) while checking ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}. This is NOT 'repository does not exist'. Check the bot user's API token (bitbucket.email / bitbucket.apiToken) and that it carries the repository admin scope. Response: $BB_BODY"
     ;;
   *)
     bb_fail "Unexpected response from Bitbucket (HTTP $BB_HTTP_CODE) while checking ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}. Response: $BB_BODY"

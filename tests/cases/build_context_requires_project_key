@@ -9,9 +9,9 @@ clear_context
 
 export REPOSITORY_NAME="my-service"
 export CODE_REPOSITORY='{"attributes":{"setup":{
-  "auth_method":"workspace_access_token",
   "workspace":"acme",
-  "access_token":"wat-token"
+  "email":"bot@nullplatform.com",
+  "apiToken":"secret-token-123"
 }}}'
 
 run_step build_context

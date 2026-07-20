@@ -1,0 +1,40 @@
+#!/bin/bash
+# nullplatform holds a single credential for Bitbucket: a bot user's Atlassian
+# API token (+ its email, the HTTP Basic username). build_context reads both from
+# the provider record and exports them for Basic auth. It is the ONLY credential
+# that can enable Pipelines, so there is no auth_method branching any more.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+clear_context
+
+export REPOSITORY_NAME="my-service"
+export CODE_REPOSITORY='{"attributes":{"setup":{
+  "workspace":"acme",
+  "projectKey":"APP",
+  "email":"bot@nullplatform.com",
+  "apiToken":"secret-token-123"
+}}}'
+
+email=$(capture_export build_context BITBUCKET_EMAIL)
+token=$(capture_export build_context BITBUCKET_API_TOKEN)
+
+if [[ "$email" != "bot@nullplatform.com" ]]; then
+  echo "  FAIL: expected the bot email, got '$email'"
+  exit 1
+fi
+
+if [[ "$token" != "secret-token-123" ]]; then
+  echo "  FAIL: expected the API token, got '$token'"
+  exit 1
+fi
+
+run_step build_context
+assert_status 0 || exit 1
+
+# The token must never reach the logs.
+if [[ "$STEP_OUTPUT" == *"secret-token-123"* ]]; then
+  echo "  FAIL: the API token leaked into the step output:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+  exit 1
+fi

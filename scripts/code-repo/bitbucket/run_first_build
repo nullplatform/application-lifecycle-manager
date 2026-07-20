@@ -45,6 +45,14 @@ if [[ "$PIPELINES_ENABLED" != "true" ]]; then
 
   bb_api PUT "$PIPELINES_CONFIG_PATH" '{"enabled": true}'
 
+  if [[ "$BB_HTTP_CODE" == "403" ]]; then
+    # This is NOT a missing scope. Enabling Pipelines requires a 2SV-enabled USER
+    # principal; the API refuses every other credential here (an OAuth app is
+    # refused permanently, a workspace access token fails the same check). Name
+    # the cause so nobody hunts a scopes bug that does not exist.
+    bb_fail "Bitbucket refused to enable Pipelines on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} (HTTP 403). This means the bot user (${BITBUCKET_EMAIL}) does not have two-step verification enabled on its BITBUCKET account -- 2SV is a prerequisite Bitbucket enforces before Pipelines can be turned on, through the API or the UI. Note this is Bitbucket 2SV, NOT Atlassian-account 2FA. Enable it on the bot user and re-run. Response: $BB_BODY"
+  fi
+
   if [[ "$BB_HTTP_CODE" != "200" ]]; then
     bb_fail "Could not enable Bitbucket Pipelines (HTTP $BB_HTTP_CODE): $BB_BODY"
   fi

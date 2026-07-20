@@ -10,10 +10,10 @@ clear_context
 
 export REPOSITORY_NAME="My-Service.git"
 export CODE_REPOSITORY='{"attributes":{"setup":{
-  "auth_method":"workspace_access_token",
   "workspace":"acme",
-  "project_key":"APP",
-  "access_token":"wat-token"
+  "projectKey":"APP",
+  "email":"bot@nullplatform.com",
+  "apiToken":"secret-token-123"
 }}}'
 
 slug=$(capture_export build_context REPOSITORY_SLUG)

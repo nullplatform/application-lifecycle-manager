@@ -15,7 +15,7 @@ else
 fi
 
 if [[ -z "$BITBUCKET_WORKSPACE" ]]; then
-  bb_fail "BITBUCKET_WORKSPACE is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.workspace) or in the environment."
+  bb_fail "BITBUCKET_WORKSPACE is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.workspace / bitbucket.workspace) or in the environment."
 fi
 
 # --- installation URL and API base -----------------------------------------
@@ -23,13 +23,13 @@ fi
 if [[ -n "${BITBUCKET_INSTALLATION_URL:-}" ]]; then
   echo "Using BITBUCKET_INSTALLATION_URL from environment: $BITBUCKET_INSTALLATION_URL"
 else
-  BITBUCKET_INSTALLATION_URL=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_url // empty')
+  BITBUCKET_INSTALLATION_URL=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installationUrl // empty')
   echo "No BITBUCKET_INSTALLATION_URL in environment, using value from platform: $BITBUCKET_INSTALLATION_URL"
 fi
 
 if [[ -z "$BITBUCKET_INSTALLATION_URL" ]]; then
   BITBUCKET_INSTALLATION_URL="https://bitbucket.org"
-  echo "No installation_url configured, defaulting to: $BITBUCKET_INSTALLATION_URL"
+  echo "No installationUrl configured, defaulting to: $BITBUCKET_INSTALLATION_URL"
 fi
 
 # Strip any trailing slash so the URLs we build never double up.
@@ -46,86 +46,41 @@ BITBUCKET_API_BASE="${BITBUCKET_API_BASE%/}"
 
 # --- auth ------------------------------------------------------------------
 #
-# Two first-class mechanisms (ADR-2). Bitbucket app passwords are REMOVED as of
-# 2026-07-28 and are deliberately not supported. This block is the only place in
-# the provider that knows which mechanism is in use: it resolves both down to a
-# single bearer token, BITBUCKET_TOKEN.
+# nullplatform holds ONE credential for Bitbucket: a dedicated bot user's
+# Atlassian API token, plus that user's email (the HTTP Basic username). This is
+# a deliberate, validated-live decision, NOT app passwords (removed 2026-07-28),
+# NOT OAuth 2LO, and NOT a workspace access token:
+#
+#   * Enabling Bitbucket Pipelines requires a 2SV'd USER principal. An OAuth app
+#     (client_credentials) is refused with a PERMANENT 403 there, and a workspace
+#     access token -- explicitly "not tied to a user" -- fails the same check.
+#     Only a user-scoped API token works, on every plan (no Premium needed).
+#   * The token is long-lived (<=365 days), so there is no mint/refresh dance.
+#
+# Every REST call uses HTTP Basic (email:api_token); git transport uses the
+# username `x-bitbucket-api-token-auth` with the token as the password.
 
-if [[ -n "${BITBUCKET_AUTH_METHOD:-}" ]]; then
-  echo "Using BITBUCKET_AUTH_METHOD from environment: $BITBUCKET_AUTH_METHOD"
+if [[ -n "${BITBUCKET_EMAIL:-}" ]]; then
+  echo "Using BITBUCKET_EMAIL from environment: $BITBUCKET_EMAIL"
 else
-  BITBUCKET_AUTH_METHOD=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.auth_method // empty')
-  echo "No BITBUCKET_AUTH_METHOD in environment, using value from platform: $BITBUCKET_AUTH_METHOD"
+  BITBUCKET_EMAIL=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.email // empty')
+  echo "No BITBUCKET_EMAIL in environment, using value from platform: $BITBUCKET_EMAIL"
 fi
 
-if [[ -z "$BITBUCKET_AUTH_METHOD" ]]; then
-  BITBUCKET_AUTH_METHOD="workspace_access_token"
-  echo "No auth_method configured, defaulting to: $BITBUCKET_AUTH_METHOD"
+if [[ -z "$BITBUCKET_EMAIL" ]]; then
+  bb_fail "BITBUCKET_EMAIL is not set. Configure the bot user's Atlassian account email on the bitbucket-configuration provider (.attributes.setup.email / bitbucket.email) or in the environment. It is the HTTP Basic username for the API token."
 fi
 
-case "$BITBUCKET_AUTH_METHOD" in
-  workspace_access_token)
-    # The exact analogue of a GitLab group access token: workspace-scoped, not
-    # tied to a human, long-lived. REQUIRES BITBUCKET PREMIUM.
-    if [[ -n "${BITBUCKET_TOKEN:-}" ]]; then
-      echo "Using BITBUCKET_TOKEN from environment (hidden)"
-    else
-      BITBUCKET_TOKEN=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.access_token // empty')
-      echo "No BITBUCKET_TOKEN in environment, using the workspace access token from platform (hidden)"
-    fi
+if [[ -n "${BITBUCKET_API_TOKEN:-}" ]]; then
+  echo "Using BITBUCKET_API_TOKEN from environment (hidden)"
+else
+  BITBUCKET_API_TOKEN=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.apiToken // empty')
+  echo "No BITBUCKET_API_TOKEN in environment, using the API token from platform (hidden)"
+fi
 
-    if [[ -z "$BITBUCKET_TOKEN" ]]; then
-      bb_fail "auth_method is 'workspace_access_token' but no token is configured on the bitbucket-configuration provider (.attributes.setup.access_token). Note that workspace access tokens require Bitbucket Premium -- if this workspace is not on Premium, set auth_method to 'oauth2'."
-    fi
-    ;;
-
-  oauth2)
-    # OAuth 2.0 consumer, client_credentials (2LO). Works on ALL Bitbucket
-    # plans. The token represents the consumer's owner -- the workspace -- not
-    # an employee, so it survives staff turnover.
-    #
-    # LIFETIME: the token lives 2 hours and this grant returns NO refresh token
-    # (you re-mint from the long-lived key/secret). An ALM run is a single
-    # application-creation hook -- seconds to low minutes -- so we mint exactly
-    # ONCE, here, and never refresh. That is deliberate: a cache or a refresh
-    # loop would be YAGNI. Accepted consequence: a run lasting >2h would fail
-    # with 401 partway through. If that ever becomes real, re-mint inside bb_api
-    # on a 401 rather than building a background refresher.
-    OAUTH_KEY="${BITBUCKET_OAUTH_KEY:-}"
-    OAUTH_SECRET="${BITBUCKET_OAUTH_SECRET:-}"
-
-    if [[ -z "$OAUTH_KEY" ]]; then
-      OAUTH_KEY=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.oauth_key // empty')
-    fi
-
-    if [[ -z "$OAUTH_SECRET" ]]; then
-      OAUTH_SECRET=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.oauth_secret // empty')
-    fi
-
-    if [[ -z "$OAUTH_KEY" || -z "$OAUTH_SECRET" ]]; then
-      bb_fail "auth_method is 'oauth2' but oauth_key/oauth_secret are not configured on the bitbucket-configuration provider (.attributes.setup.oauth_key, .attributes.setup.oauth_secret)."
-    fi
-
-    echo "Minting a Bitbucket OAuth 2.0 access token (client_credentials) for workspace: $BITBUCKET_WORKSPACE"
-
-    OAUTH_RESPONSE=$(curl -s -u "${OAUTH_KEY}:${OAUTH_SECRET}" \
-      -X POST "${BITBUCKET_INSTALLATION_URL}/site/oauth2/access_token" \
-      -d grant_type=client_credentials)
-
-    BITBUCKET_TOKEN=$(echo "$OAUTH_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
-
-    if [[ -z "$BITBUCKET_TOKEN" ]]; then
-      # Never echo OAUTH_RESPONSE wholesale -- on success it contains the token.
-      bb_fail "Could not mint an OAuth token for workspace '$BITBUCKET_WORKSPACE'. Bitbucket said: $(echo "$OAUTH_RESPONSE" | jq -r '.error_description // .error // "unknown error"' 2>/dev/null)"
-    fi
-
-    echo "Minted an OAuth access token (hidden), expires in $(echo "$OAUTH_RESPONSE" | jq -r '.expires_in // "?"')s"
-    ;;
-
-  *)
-    bb_fail "Unsupported auth_method '$BITBUCKET_AUTH_METHOD'. Expected 'workspace_access_token' or 'oauth2'. (Bitbucket app passwords were removed on 2026-07-28 and are not supported.)"
-    ;;
-esac
+if [[ -z "$BITBUCKET_API_TOKEN" ]]; then
+  bb_fail "BITBUCKET_API_TOKEN is not set. Configure the bot user's Atlassian API token on the bitbucket-configuration provider (.attributes.setup.apiToken / bitbucket.apiToken) or in the environment. It must belong to a 2SV-enabled Bitbucket user -- that is the only principal Bitbucket lets enable Pipelines. (Bitbucket app passwords were removed on 2026-07-28 and are not supported.)"
+fi
 
 # --- project key -----------------------------------------------------------
 #
@@ -136,12 +91,12 @@ esac
 if [[ -n "${BITBUCKET_PROJECT_KEY:-}" ]]; then
   echo "Using BITBUCKET_PROJECT_KEY from environment: $BITBUCKET_PROJECT_KEY"
 else
-  BITBUCKET_PROJECT_KEY=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.project_key // empty')
+  BITBUCKET_PROJECT_KEY=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.projectKey // empty')
   echo "No BITBUCKET_PROJECT_KEY in environment, using value from platform: $BITBUCKET_PROJECT_KEY"
 fi
 
 if [[ -z "$BITBUCKET_PROJECT_KEY" ]]; then
-  bb_fail "BITBUCKET_PROJECT_KEY is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.project_key) or in the environment. It cannot be omitted: Bitbucket would silently assign the new repository to the oldest project in the workspace."
+  bb_fail "BITBUCKET_PROJECT_KEY is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.projectKey / bitbucket.projectKey) or in the environment. It cannot be omitted: Bitbucket would silently assign the new repository to the oldest project in the workspace."
 fi
 
 # --- repository slug -------------------------------------------------------
@@ -167,10 +122,10 @@ fi
 echo "Bitbucket workspace:  $BITBUCKET_WORKSPACE"
 echo "Bitbucket project:    $BITBUCKET_PROJECT_KEY"
 echo "Bitbucket repository: $REPOSITORY_SLUG"
-echo "Bitbucket auth:       $BITBUCKET_AUTH_METHOD"
+echo "Bitbucket bot user:   $BITBUCKET_EMAIL"
 
-export BITBUCKET_TOKEN
-export BITBUCKET_AUTH_METHOD
+export BITBUCKET_EMAIL
+export BITBUCKET_API_TOKEN
 export BITBUCKET_WORKSPACE
 export BITBUCKET_PROJECT_KEY
 export BITBUCKET_INSTALLATION_URL

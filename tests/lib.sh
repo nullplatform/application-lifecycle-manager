@@ -21,7 +21,8 @@ setup() {
   export PATH="$REPO_ROOT/tests/stubs:$PATH"
 
   # The context that build_context exports for every later step.
-  export BITBUCKET_TOKEN="test-token"
+  export BITBUCKET_EMAIL="bot@nullplatform.com"
+  export BITBUCKET_API_TOKEN="test-token"
   export BITBUCKET_WORKSPACE="acme"
   export BITBUCKET_PROJECT_KEY="APP"
   export BITBUCKET_INSTALLATION_URL="https://bitbucket.org"
@@ -39,9 +40,9 @@ teardown() {
 # setup() pre-exports that context because it is what the steps AFTER
 # build_context consume; a build_context test must start from a clean slate.
 clear_context() {
-  unset BITBUCKET_TOKEN BITBUCKET_WORKSPACE BITBUCKET_PROJECT_KEY \
-    BITBUCKET_INSTALLATION_URL BITBUCKET_API_BASE BITBUCKET_AUTH_METHOD \
-    BITBUCKET_OAUTH_KEY BITBUCKET_OAUTH_SECRET REPOSITORY_SLUG
+  unset BITBUCKET_EMAIL BITBUCKET_API_TOKEN BITBUCKET_WORKSPACE \
+    BITBUCKET_PROJECT_KEY BITBUCKET_INSTALLATION_URL BITBUCKET_API_BASE \
+    REPOSITORY_SLUG
 }
 
 # fixture METHOD PATH CODE [BODY]

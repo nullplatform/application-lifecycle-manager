@@ -14,9 +14,13 @@
 #     workflow, and entrypoint then reports "failed" back to nullplatform.
 #   * `return` skips the rest of a step without failing the workflow.
 #
-# Auth is resolved once, in build_context, which exports a single bearer token
-# as BITBUCKET_TOKEN (from either a Workspace Access Token or a minted OAuth 2LO
-# token). Nothing else in this directory knows or cares which.
+# AUTH: nullplatform authenticates to Bitbucket Cloud with a single dedicated
+# bot user's Atlassian API token, using HTTP Basic (email:api_token). This is the
+# ONLY credential that can enable Bitbucket Pipelines -- an OAuth app (2LO) is
+# refused there with a permanent 403, and a workspace access token fails the same
+# 2SV check (both validated live). build_context resolves the email + token and
+# exports them; every REST call here sends them as Basic auth, and git transport
+# uses the username `x-bitbucket-api-token-auth` with the token as the password.
 
 # bb_api METHOD PATH [BODY]
 #
@@ -37,7 +41,7 @@ bb_api() {
     -o "$tmp"
     -w '%{http_code}'
     -X "$method"
-    -H "Authorization: Bearer ${BITBUCKET_TOKEN}"
+    -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}"
     -H "Content-Type: application/json"
   )
 
@@ -70,17 +74,19 @@ bb_encode_uuid() {
 
 # bb_scrub
 #
-# stdin filter that redacts the bearer token. git prints credentialed remote
-# URLs verbatim on failure, so every byte of git output goes through this.
+# stdin filter that redacts the API token. git prints credentialed remote URLs
+# verbatim on failure, so every byte of git output goes through this. (The bot
+# email is the Basic-auth username and the git URL's userinfo is the fixed
+# literal `x-bitbucket-api-token-auth`; the token is the only secret.)
 bb_scrub() {
-  if [[ -z "${BITBUCKET_TOKEN:-}" ]]; then
+  if [[ -z "${BITBUCKET_API_TOKEN:-}" ]]; then
     cat
     return
   fi
 
   local escaped
   # Escape regex metacharacters (including /) so any token value is literal.
-  escaped=$(printf '%s' "$BITBUCKET_TOKEN" | sed -e 's/[]\/$*.^[]/\\&/g')
+  escaped=$(printf '%s' "$BITBUCKET_API_TOKEN" | sed -e 's/[]\/$*.^[]/\\&/g')
 
   sed -e "s/${escaped}/***/g"
 }

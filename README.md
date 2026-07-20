@@ -55,14 +55,20 @@ Configure a `bitbucket-configuration` code-repository provider with:
 | Attribute | Required | Notes |
 |---|---|---|
 | `setup.workspace` | yes | The Bitbucket workspace slug. |
-| `setup.project_key` | yes | The key of the project new repositories are filed under. **Not optional**: omit it and Bitbucket silently assigns the repository to the workspace's oldest project. |
-| `setup.auth_method` | yes | `workspace_access_token` or `oauth2`. |
-| `setup.access_token` | when `auth_method` is `workspace_access_token` | A Workspace Access Token. **Requires Bitbucket Premium.** It cannot be minted via API — a workspace admin creates it in the Bitbucket UI and pastes it here. Scopes: `repository:admin`, `repository:write`, `pipeline:write`, `pipeline:variable`, `webhook`. |
-| `setup.oauth_key` / `setup.oauth_secret` | when `auth_method` is `oauth2` | An OAuth 2.0 consumer using the `client_credentials` grant. Works on **all** Bitbucket plans. The token represents the workspace, not an individual. |
-| `setup.installation_url` | no | Defaults to `https://bitbucket.org`. |
+| `setup.projectKey` | yes | The key of the project new repositories are filed under. **Not optional**: omit it and Bitbucket silently assigns the repository to the workspace's oldest project. |
+| `setup.email` | yes | The Atlassian account email of the dedicated Bitbucket **bot user**. This is the HTTP Basic username for the API token. |
+| `setup.apiToken` | yes | The bot user's **Atlassian API token**. Used as the HTTP Basic password for the REST API and, with the git username `x-bitbucket-api-token-auth`, for git-over-HTTPS. |
+| `setup.installationUrl` | no | Defaults to `https://bitbucket.org`. |
 | `access.default_collaborators` | no | See the limitation below. |
 
-> **Bitbucket app passwords are not supported.** Atlassian removed them on 2026-07-28.
+> **Authentication is a dedicated bot user's Atlassian API token.** nullplatform must hold a
+> **user-scoped** credential because enabling Bitbucket Pipelines requires a two-step-verification
+> (2SV) enabled *user* principal — an OAuth app (2LO) is refused there with a permanent `403`, and a
+> workspace access token fails the same check. So: create a dedicated Bitbucket bot user, **enable
+> Bitbucket 2SV on it** (this is Bitbucket 2SV, *not* Atlassian-account 2FA), grant it repository /
+> pipeline / project admin on the workspace, and issue it an Atlassian API token. This works on
+> **every** Bitbucket plan (no Premium required). Atlassian API tokens expire in ≤365 days, so rotate
+> it before then. **Bitbucket app passwords are not supported** (Atlassian removed them on 2026-07-28).
 
 **Limitation — collaborators must already be workspace members.** Bitbucket has no API to
 invite a user to a workspace, so `add_collaborators` can only *grant repository permissions* to
