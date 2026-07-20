@@ -52,14 +52,14 @@ fails immediately with an explicit message instead of part-way through the workf
 
 Configure a `bitbucket-configuration` code-repository provider with:
 
-| Attribute | Required | Notes |
-|---|---|---|
-| `setup.workspace` | yes | The Bitbucket workspace slug. |
-| `setup.projectKey` | yes | The key of the project new repositories are filed under. **Not optional**: omit it and Bitbucket silently assigns the repository to the workspace's oldest project. |
-| `setup.email` | yes | The Atlassian account email of the dedicated Bitbucket **bot user**. This is the HTTP Basic username for the API token. |
-| `setup.apiToken` | yes | The bot user's **Atlassian API token**. Used as the HTTP Basic password for the REST API and, with the git username `x-bitbucket-api-token-auth`, for git-over-HTTPS. |
-| `setup.installationUrl` | no | Defaults to `https://bitbucket.org`. |
-| `access.default_collaborators` | no | See the limitation below. |
+| Attribute (provider `setup`) | NRN key | Required | Source | Notes |
+|---|---|---|---|---|
+| `workspace` | `bitbucket.workspace` | yes | provider or env | The Bitbucket workspace slug. |
+| `project_key` | `bitbucket.projectKey` | yes | provider or env | The key of the project new repositories are filed under. **Not optional**: omit it and Bitbucket silently assigns the repository to the workspace's oldest project. |
+| `email` | `bitbucket.email` | yes | provider or env | The Atlassian account email of the dedicated Bitbucket **bot user**. HTTP Basic username for the API token. |
+| `api_token` | `bitbucket.apiToken` | yes | **`BITBUCKET_API_TOKEN` env only** | The bot user's **Atlassian API token** — HTTP Basic password for the REST API and, with the git username `x-bitbucket-api-token-auth`, for git-over-HTTPS. See "credential sourcing" below. |
+| `installation_url` | `bitbucket.installationUrl` | no | provider or env | Defaults to `https://bitbucket.org`. |
+| `access.default_collaborators` | — | no | provider | See the limitation below. |
 
 > **Authentication is a dedicated bot user's Atlassian API token.** nullplatform must hold a
 > **user-scoped** credential because enabling Bitbucket Pipelines requires a two-step-verification
@@ -69,6 +69,19 @@ Configure a `bitbucket-configuration` code-repository provider with:
 > pipeline / project admin on the workspace, and issue it an Atlassian API token. This works on
 > **every** Bitbucket plan (no Premium required). Atlassian API tokens expire in ≤365 days, so rotate
 > it before then. **Bitbucket app passwords are not supported** (Atlassian removed them on 2026-07-28).
+
+> **Credential sourcing — this is where Bitbucket differs from GitLab.** The API token is stored as a
+> proper **secret** (the `bitbucket-configuration` spec marks `api_token` `secret: true`), and
+> nullplatform **does not return secret attribute values on authenticated provider reads**. So `np
+> provider list` — which ALM uses to load provider config — returns `api_token: null`; the platform
+> read *cannot* hand ALM the token. (The GitLab provider only works from the platform read because its
+> spec never marked `access_token` secret — a laxity not repeated here.) **Therefore the token's
+> primary, documented source is the `BITBUCKET_API_TOKEN` environment variable set on the ALM
+> deployment** (`build_context` also honours `BITBUCKET_EMAIL`, `BITBUCKET_WORKSPACE`,
+> `BITBUCKET_PROJECT_KEY`, `BITBUCKET_INSTALLATION_URL`). The non-secret fields above are still read
+> from the provider record. If the token is absent from both env and record, provisioning fails
+> immediately with a message explaining exactly this. *(`np nrn read` can address raw NRN keys but is
+> deprecated and is not relied upon here.)*
 
 **Limitation — collaborators must already be workspace members.** Bitbucket has no API to
 invite a user to a workspace, so `add_collaborators` can only *grant repository permissions* to

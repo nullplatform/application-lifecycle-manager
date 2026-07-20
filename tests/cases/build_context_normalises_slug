@@ -9,11 +9,12 @@ trap teardown EXIT
 clear_context
 
 export REPOSITORY_NAME="My-Service.git"
+export BITBUCKET_API_TOKEN="env-token-xyz"
 export CODE_REPOSITORY='{"attributes":{"setup":{
   "workspace":"acme",
-  "projectKey":"APP",
+  "project_key":"APP",
   "email":"bot@nullplatform.com",
-  "apiToken":"secret-token-123"
+  "api_token":null
 }}}'
 
 slug=$(capture_export build_context REPOSITORY_SLUG)

@@ -1,0 +1,54 @@
+#!/bin/bash
+# The Bitbucket api token is stored as a SECRET, so `np provider list` returns
+# api_token: null (secret attributes are nullified on authenticated reads). The
+# token is therefore supplied to the ALM deployment via the BITBUCKET_API_TOKEN
+# env var, while the NON-secret fields (email, workspace, project_key) still come
+# from the provider record -- in the schema's snake_case shape.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+clear_context
+
+export REPOSITORY_NAME="my-service"
+
+# The credential the ALM deployment holds (what the platform cannot return).
+export BITBUCKET_API_TOKEN="env-token-xyz"
+
+# Exactly what `np provider list` returns: snake_case attributes, secret nulled.
+export CODE_REPOSITORY='{"attributes":{"setup":{
+  "workspace":"acme",
+  "project_key":"APP",
+  "installation_url":"https://bitbucket.org",
+  "email":"bot@nullplatform.com",
+  "api_token":null
+}}}'
+
+token=$(capture_export build_context BITBUCKET_API_TOKEN)
+email=$(capture_export build_context BITBUCKET_EMAIL)
+proj=$(capture_export build_context BITBUCKET_PROJECT_KEY)
+
+if [[ "$token" != "env-token-xyz" ]]; then
+  echo "  FAIL: expected the env-provided token, got '$token'"
+  exit 1
+fi
+
+# Non-secret fields resolve from the record via the snake_case paths.
+if [[ "$email" != "bot@nullplatform.com" ]]; then
+  echo "  FAIL: expected the bot email from the record, got '$email'"
+  exit 1
+fi
+
+if [[ "$proj" != "APP" ]]; then
+  echo "  FAIL: expected project key 'APP' from the record (.attributes.setup.project_key), got '$proj'"
+  exit 1
+fi
+
+run_step build_context
+assert_status 0 || exit 1
+
+# The token must never reach the logs.
+if [[ "$STEP_OUTPUT" == *"env-token-xyz"* ]]; then
+  echo "  FAIL: the API token leaked into the step output:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+  exit 1
+fi
