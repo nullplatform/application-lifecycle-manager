@@ -37,6 +37,15 @@ You must configure your code repository provider through **nullplatform platform
 
 > **Note:** This repository supports **GitLab** and **GitHub** code repositories.
 
+The provider to use is taken from `CODE_REPOSITORY_PROVIDER`, or from the nullplatform account's
+`repository_provider` when that variable is not set. The matching configuration is then selected by
+its provider specification, so an account may hold configurations for several providers at once
+without them interfering. If you configured a **custom** provider specification, set
+`CODE_REPOSITORY_SPECIFICATION_ID` in the environment to point the lookup at it.
+
+`azure-devops` is recognized by the lookup but its scripts are not implemented yet, so selecting it
+fails immediately with an explicit message instead of part-way through the workflow.
+
 #### Workflow
 
 The code repository workflow is composed of the following tasks:

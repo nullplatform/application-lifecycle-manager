@@ -12,6 +12,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - GitHub provider now resolves `GITHUB_INSTALLATION_ID` and `GITHUB_ACCOUNT` from the platform's
   code repository setup when they are not present in the environment.
 
+### Fixed
+- The code repository configuration is now selected by matching the provider's specification ID
+  instead of taking the first result. Accounts with more than one code repository configuration
+  no longer risk picking a configuration that belongs to a different provider.
+- Selecting a code repository provider that has no scripts in this repository now fails immediately
+  with an explicit message, instead of failing part-way through the workflow.
+- The GitLab provider now fails with an explicit error when a setup value cannot be resolved,
+  instead of using the literal string `null` (which made it search for a group named `null`).
+- Default collaborators are now read from the property each provider actually defines
+  (`access.collaborators` on GitHub, `access.default_collaborators` on GitLab). GitHub default
+  collaborators were previously never applied, without reporting an error.
+
 ## [0.2.0] - 2025-11-13
 
 ### Added
