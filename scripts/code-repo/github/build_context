@@ -1,8 +1,29 @@
 #!/bin/bash
 
-for var in GITHUB_APP_ID GITHUB_PRIVATE_KEY GITHUB_INSTALLATION_ID GITHUB_ACCOUNT; do
+for var in GITHUB_APP_ID GITHUB_PRIVATE_KEY; do
   if [[ -z "${!var}" ]]; then
     echo "ERROR: $var is required for the GitHub code provider but is not set."
+    exit 1
+  fi
+done
+
+if [[ -n "$GITHUB_INSTALLATION_ID" ]]; then
+  echo "Using GITHUB_INSTALLATION_ID from environment: $GITHUB_INSTALLATION_ID"
+else
+  GITHUB_INSTALLATION_ID=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_id // empty')
+  echo "No GITHUB_INSTALLATION_ID in environment, using value from platform: $GITHUB_INSTALLATION_ID"
+fi
+
+if [[ -n "$GITHUB_ACCOUNT" ]]; then
+  echo "Using GITHUB_ACCOUNT from environment: $GITHUB_ACCOUNT"
+else
+  GITHUB_ACCOUNT=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.organization // empty')
+  echo "No GITHUB_ACCOUNT in environment, using value from platform: $GITHUB_ACCOUNT"
+fi
+
+for var in GITHUB_INSTALLATION_ID GITHUB_ACCOUNT; do
+  if [[ -z "${!var}" ]]; then
+    echo "ERROR: $var is not set and could not be resolved from CODE_REPOSITORY."
     exit 1
   fi
 done

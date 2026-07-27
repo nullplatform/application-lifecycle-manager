@@ -4,3 +4,8 @@
 
 .env
 .claude
+
+# Local secrets — never commit
+*.pem
+*.key
+secret.yaml

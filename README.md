@@ -64,12 +64,17 @@ The code repository workflow is composed of the following tasks:
 To use GitHub as the code repository provider, set `CODE_REPOSITORY_PROVIDER=github` in the
 agent environment along with a GitHub App's credentials:
 
-| Variable                  | Required | Description                                             |
-|---------------------------|----------|---------------------------------------------------------|
-| `GITHUB_APP_ID`           | yes      | The GitHub App's ID.                                    |
-| `GITHUB_PRIVATE_KEY`      | yes      | The GitHub App's private key (PEM).                     |
-| `GITHUB_INSTALLATION_ID`  | yes      | The App installation ID for the target org.             |
-| `GITHUB_ACCOUNT`          | yes      | The owner/org where repositories are created.           |
+| Variable                  | Required | Description                                                                                            |
+|---------------------------|----------|--------------------------------------------------------------------------------------------------------|
+| `GITHUB_APP_ID`           | yes      | The GitHub App's ID.                                                                                   |
+| `GITHUB_PRIVATE_KEY`      | yes      | The GitHub App's private key (PEM).                                                                    |
+| `GITHUB_INSTALLATION_ID`  | no       | The App installation ID for the target org. Falls back to `attributes.setup.installation_id` on the platform's code repository. |
+| `GITHUB_ACCOUNT`          | no       | The owner/org where repositories are created. Falls back to `attributes.setup.organization` on the platform's code repository.  |
+
+`GITHUB_INSTALLATION_ID` and `GITHUB_ACCOUNT` are resolved from the environment first and, when
+absent, read from the code repository configured in nullplatform — the same precedence the GitLab
+provider uses. Setting them in the environment overrides the platform values. The App credentials
+(`GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`) must always come from the environment.
 
 **Why a GitHub App (not a PAT):** the App is owned by the organization, is not tied to a
 person, and needs no manual token rotation — an installation token is minted per run and

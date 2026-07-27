@@ -9,6 +9,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
+- GitHub provider now resolves `GITHUB_INSTALLATION_ID` and `GITHUB_ACCOUNT` from the platform's
+  code repository setup when they are not present in the environment.
 
 ## [0.2.0] - 2025-11-13
 
