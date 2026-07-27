@@ -6,7 +6,7 @@ export NP_ACTION_CONTEXT="$CLEAN_CONTEXT"
 
 CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
 
-cd "$CURRENT_DIR" && cd ..
+cd "$CURRENT_DIR"
 
 TOKEN=$(np token create --body "{\"api_key\": \"$NP_API_KEY\"}" --format json | jq -r .access_token)
 
