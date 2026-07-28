@@ -1,5 +1,7 @@
 #!/bin/bash
 
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
 for var in GITHUB_APP_ID GITHUB_PRIVATE_KEY; do
   if [[ -z "${!var}" ]]; then
     echo "ERROR: $var is required for the GitHub code provider but is not set."
@@ -42,28 +44,19 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-
-NOW=$(date +%s)
-IAT=$((NOW - 60))
-EXP=$((NOW + 540))
-
-JWT_HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
-JWT_PAYLOAD=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$IAT" "$EXP" "$GITHUB_APP_ID" | b64url)
-JWT_UNSIGNED="$JWT_HEADER.$JWT_PAYLOAD"
-
-PRIVATE_KEY_FILE=$(mktemp)
-printf '%s' "$GITHUB_PRIVATE_KEY" | sed 's/\\n/\n/g' > "$PRIVATE_KEY_FILE"
-
-JWT_SIGNATURE=$(printf '%s' "$JWT_UNSIGNED" | openssl dgst -sha256 -sign "$PRIVATE_KEY_FILE" | b64url)
-rm -f "$PRIVATE_KEY_FILE"
-
-if [[ -z "$JWT_SIGNATURE" ]]; then
-  echo "ERROR: failed to sign the GitHub App JWT (check GITHUB_PRIVATE_KEY)."
+# The JWT is built with python3 because the agent image ships no openssl binary, and openssl is
+# available neither through mise nor through the image's apk index.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required to sign the GitHub App JWT but is not available in this environment."
   exit 1
 fi
 
-JWT="$JWT_UNSIGNED.$JWT_SIGNATURE"
+JWT=$(python3 "$CURRENT_DIR/sign_app_jwt.py")
+
+if [[ -z "$JWT" ]]; then
+  echo "ERROR: failed to build the GitHub App JWT."
+  exit 1
+fi
 
 TOKEN_RESPONSE=$(curl -s -X POST \
   -H "Authorization: Bearer $JWT" \
