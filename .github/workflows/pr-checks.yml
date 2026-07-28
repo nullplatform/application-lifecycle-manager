@@ -8,13 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  # The reusable workflow runs `find "$SCRIPT_DIRS"`, quoting the value as a
-  # single path — so a space-separated list breaks. Pass one path per job.
-  shellcheck-entrypoint:
+  # Passing no script_dirs makes the reusable workflow auto-discover *.sh files and
+  # extensionless files with a shell shebang. Naming a directory instead would send every
+  # file under it to shellcheck, including non-shell helpers such as the Python JWT signer.
+  shellcheck:
     uses: nullplatform/actions-nullplatform/.github/workflows/shellcheck.yml@main
-    with:
-      script_dirs: entrypoint
-  shellcheck-scripts:
-    uses: nullplatform/actions-nullplatform/.github/workflows/shellcheck.yml@main
-    with:
-      script_dirs: scripts
