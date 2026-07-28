@@ -20,6 +20,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   instead of using the literal string `null` (which made it search for a group named `null`).
 - A code repository configuration that defines no default collaborators no longer breaks the
   collaborators step; the empty case is normalized to an empty list.
+- A failed `ci` API key creation now stops the workflow and reports the API response. It previously
+  went unnoticed and published a repository secret holding the literal string `null`.
 
 ## [0.2.0] - 2025-11-13
 
