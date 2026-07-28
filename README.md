@@ -114,6 +114,26 @@ The asset repository workflow is composed of the following tasks:
 
 ---
 
+## Toggling repository creation
+
+The two responsibilities are independent, so you can disable either one with an environment
+variable set on the agent. This is useful when only one side is managed here — for example,
+creating code repositories while asset repositories are provisioned elsewhere.
+
+| Variable                  | Default | Effect                                            |
+|---------------------------|---------|---------------------------------------------------|
+| `CREATE_CODE_REPOSITORY`  | enabled | Set to `false` to skip code repository creation.  |
+| `CREATE_ASSET_REPOSITORY` | enabled | Set to `false` to skip asset repository creation. |
+
+Only the exact lowercase value `false` disables a step. Any other value, including unset,
+empty, and `FALSE`, keeps the default behavior of creating the repository.
+
+Skipping a step is not an error: the hook still reports success, and the step that remains
+enabled runs normally. Setting both to `false` leaves the application created with no
+repositories provisioned.
+
+---
+
 ## Installing the application lifecycle manager
 
 This section describes how to install `application-lifecycle-manager` in your own infrastructure using the **nullplatform agent**.
