@@ -9,3 +9,20 @@
 *.pem
 *.key
 secret.yaml
+
+# Tofu/Terraform — state holds np_api_key in plaintext
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.tfbackend
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+backend-local.tf
