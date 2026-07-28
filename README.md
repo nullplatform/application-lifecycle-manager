@@ -46,8 +46,6 @@ without them interfering. If you configured a **custom** provider specification,
 `azure-devops` is recognized by the lookup but its scripts are not implemented yet, so selecting it
 fails immediately with an explicit message instead of part-way through the workflow.
 
-> **Note:** This repository supports **GitLab** and **Bitbucket Cloud** repositories.
-
 #### Bitbucket Cloud
 
 Configure a `bitbucket-configuration` code-repository provider with:
@@ -91,7 +89,6 @@ creation fails with an error naming them; a workspace administrator must invite 
 **Limitation — no template import API.** Bitbucket Cloud cannot import a repository from a URL,
 and forking is no longer usable. Templates are therefore seeded with a real `git clone` + `git
 push`, squashed to a single initial commit. **`git` must be available on the agent host.**
->>>>>>> 54b48a2 (feat(code-repo): emit NULLPLATFORM_API_KEY and document bitbucket)
 
 #### Workflow
 
