@@ -85,7 +85,7 @@ else
 fi
 
 if [[ -z "$BITBUCKET_EMAIL" ]]; then
-  bb_fail "BITBUCKET_EMAIL is not set. Configure the bot user's Atlassian account email on the bitbucket-configuration provider (.attributes.setup.email / NRN bitbucket.email) or in the environment. It is the HTTP Basic username for the API token."
+  bb_fail "BITBUCKET_EMAIL is not set. It is the HTTP Basic username that pairs with BITBUCKET_API_TOKEN, so it lives next to the token in the environment of the ALM deployment, NOT on the bitbucket-configuration provider (the provider carries configuration only, no credentials). Set it to the bot user's Atlassian account email."
 fi
 
 if [[ -n "${BITBUCKET_API_TOKEN:-}" ]]; then
