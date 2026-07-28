@@ -35,7 +35,16 @@ When an application is created, this service coordinates two main tasks:
 
 You must configure your code repository provider through **nullplatform platform settings** or the **nullplatform Terraform provider**.
 
-> **Note:** At the moment, this repository supports **GitLab** repositories only.
+> **Note:** This repository supports **GitLab** and **GitHub** code repositories.
+
+The provider to use is taken from `CODE_REPOSITORY_PROVIDER`, or from the nullplatform account's
+`repository_provider` when that variable is not set. The matching configuration is then selected by
+its provider specification, so an account may hold configurations for several providers at once
+without them interfering. If you configured a **custom** provider specification, set
+`CODE_REPOSITORY_SPECIFICATION_ID` in the environment to point the lookup at it.
+
+`azure-devops` is recognized by the lookup but its scripts are not implemented yet, so selecting it
+fails immediately with an explicit message instead of part-way through the workflow.
 
 #### Workflow
 
@@ -58,6 +67,30 @@ The code repository workflow is composed of the following tasks:
 
 - **Trigger initial CI build**  
   Optionally kicks off a first CI build so you can deploy your application immediately after creation.
+
+#### Using GitHub
+
+To use GitHub as the code repository provider, set `CODE_REPOSITORY_PROVIDER=github` in the
+agent environment along with a GitHub App's credentials:
+
+| Variable                  | Required | Description                                                                                            |
+|---------------------------|----------|--------------------------------------------------------------------------------------------------------|
+| `GITHUB_APP_ID`           | yes      | The GitHub App's ID.                                                                                   |
+| `GITHUB_PRIVATE_KEY`      | yes      | The GitHub App's private key (PEM).                                                                    |
+| `GITHUB_INSTALLATION_ID`  | no       | The App installation ID for the target org. Falls back to `attributes.setup.installation_id` on the platform's code repository. |
+| `GITHUB_ACCOUNT`          | no       | The owner/org where repositories are created. Falls back to `attributes.setup.organization` on the platform's code repository.  |
+
+`GITHUB_INSTALLATION_ID` and `GITHUB_ACCOUNT` are resolved from the environment first and, when
+absent, read from the code repository configured in nullplatform — the same precedence the GitLab
+provider uses. Setting them in the environment overrides the platform values. The App credentials
+(`GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`) must always come from the environment.
+
+**Why a GitHub App (not a PAT):** the App is owned by the organization, is not tied to a
+person, and needs no manual token rotation — an installation token is minted per run and
+expires on its own. Install the App on your org and grant it repository **administration**,
+**contents**, **secrets**, and **actions** permissions. The agent host must have `curl`, `jq`, and
+`python3` with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI, which is
+installed automatically via `mise` when absent. GitHub.com only.
 
 ---
 

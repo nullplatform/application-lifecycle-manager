@@ -1,3 +1,11 @@
 .idea
 
 .DS_Store
+
+.env
+.claude
+
+# Local secrets — never commit
+*.pem
+*.key
+secret.yaml

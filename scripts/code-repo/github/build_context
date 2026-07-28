@@ -1,0 +1,77 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+for var in GITHUB_APP_ID GITHUB_PRIVATE_KEY; do
+  if [[ -z "${!var}" ]]; then
+    echo "ERROR: $var is required for the GitHub code provider but is not set."
+    exit 1
+  fi
+done
+
+if [[ -n "$GITHUB_INSTALLATION_ID" ]]; then
+  echo "Using GITHUB_INSTALLATION_ID from environment: $GITHUB_INSTALLATION_ID"
+else
+  GITHUB_INSTALLATION_ID=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_id // empty')
+  echo "No GITHUB_INSTALLATION_ID in environment, using value from platform: $GITHUB_INSTALLATION_ID"
+fi
+
+if [[ -n "$GITHUB_ACCOUNT" ]]; then
+  echo "Using GITHUB_ACCOUNT from environment: $GITHUB_ACCOUNT"
+else
+  GITHUB_ACCOUNT=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.organization // empty')
+  echo "No GITHUB_ACCOUNT in environment, using value from platform: $GITHUB_ACCOUNT"
+fi
+
+for var in GITHUB_INSTALLATION_ID GITHUB_ACCOUNT; do
+  if [[ -z "${!var}" ]]; then
+    echo "ERROR: $var is not set and could not be resolved from CODE_REPOSITORY."
+    exit 1
+  fi
+done
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "gh CLI not found, installing via mise"
+  if ! mise use -g gh@latest; then
+    echo "ERROR: failed to install gh via mise"
+    exit 1
+  fi
+  export PATH="$HOME/.local/share/mise/shims:$PATH"
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh CLI is still not available after install"
+  exit 1
+fi
+
+# The JWT is built with python3 because the agent image ships no openssl binary, and openssl is
+# available neither through mise nor through the image's apk index.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required to sign the GitHub App JWT but is not available in this environment."
+  exit 1
+fi
+
+JWT=$(python3 "$CURRENT_DIR/sign_app_jwt.py")
+
+if [[ -z "$JWT" ]]; then
+  echo "ERROR: failed to build the GitHub App JWT."
+  exit 1
+fi
+
+TOKEN_RESPONSE=$(curl -s -X POST \
+  -H "Authorization: Bearer $JWT" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/app/installations/$GITHUB_INSTALLATION_ID/access_tokens")
+
+GH_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token // empty')
+
+if [[ -z "$GH_TOKEN" ]]; then
+  echo "ERROR: could not obtain a GitHub App installation token:"
+  echo "$TOKEN_RESPONSE" | jq . 2>/dev/null || echo "$TOKEN_RESPONSE"
+  exit 1
+fi
+
+echo "Obtained GitHub App installation token for account: $GITHUB_ACCOUNT"
+
+export GH_TOKEN
+export GITHUB_ACCOUNT
