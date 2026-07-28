@@ -88,8 +88,9 @@ provider uses. Setting them in the environment overrides the platform values. Th
 **Why a GitHub App (not a PAT):** the App is owned by the organization, is not tied to a
 person, and needs no manual token rotation — an installation token is minted per run and
 expires on its own. Install the App on your org and grant it repository **administration**,
-**contents**, **secrets**, and **actions** permissions. The agent host must have the `gh`
-CLI (installed automatically via `mise` if absent), `openssl`, and `curl`. GitHub.com only.
+**contents**, **secrets**, and **actions** permissions. The agent host must have `curl`, `jq`, and
+`python3` with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI, which is
+installed automatically via `mise` when absent. GitHub.com only.
 
 ---
 

@@ -13,6 +13,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   code repository setup when they are not present in the environment.
 
 ### Fixed
+- The GitHub App JWT is now signed by `scripts/code-repo/github/sign_app_jwt.py` instead of the
+  `openssl` CLI, which is not present in the agent image and cannot be installed through `mise`.
+  Signing failures now report the actual cause instead of blaming `GITHUB_PRIVATE_KEY`.
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
   no longer risk picking a configuration that belongs to a different provider.
