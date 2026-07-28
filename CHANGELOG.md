@@ -9,13 +9,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
-- GitHub provider now resolves `GITHUB_INSTALLATION_ID` and `GITHUB_ACCOUNT` from the platform's
-  code repository setup when they are not present in the environment.
 
 ### Fixed
-- The GitHub App JWT is now signed by `scripts/code-repo/github/sign_app_jwt.py` instead of the
-  `openssl` CLI, which is not present in the agent image and cannot be installed through `mise`.
-  Signing failures now report the actual cause instead of blaming `GITHUB_PRIVATE_KEY`.
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
   no longer risk picking a configuration that belongs to a different provider.
@@ -23,9 +18,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   with an explicit message, instead of failing part-way through the workflow.
 - The GitLab provider now fails with an explicit error when a setup value cannot be resolved,
   instead of using the literal string `null` (which made it search for a group named `null`).
-- Default collaborators are now read from the property each provider actually defines
-  (`access.collaborators` on GitHub, `access.default_collaborators` on GitLab). GitHub default
-  collaborators were previously never applied, without reporting an error.
+- A code repository configuration that defines no default collaborators no longer breaks the
+  collaborators step; the empty case is normalized to an empty list.
 
 ## [0.2.0] - 2025-11-13
 
