@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Workflow steps are sourced into one shared shell, so this must `return` and not `exit`.
+if [[ "${CREATE_ASSET_REPOSITORY:-true}" == "false" ]]; then
+  echo "CREATE_ASSET_REPOSITORY=false — skipping asset repository creation"
+  return 0
+fi
+
 ASSET_REPOSITORY=$(np provider list --categories assets-repository --nrn "$NRN" --format json | jq ".results[0]")
 
 if [[ -n "$ASSET_REPOSITORY_PROVIDER" ]]; then
