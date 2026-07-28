@@ -10,6 +10,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Added
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
 
+### Changed
+- The `ci` API key is now stored in the created repository as `NULLPLATFORM_API_KEY`, the name the
+  nullplatform CLI reads, for every provider. It was previously stored as `NP_API_KEY`, so CI
+  templates that reference that name must be updated.
+
 ### Fixed
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
