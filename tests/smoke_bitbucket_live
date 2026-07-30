@@ -20,7 +20,14 @@
 #   TEMPLATE_URL=https://github.com/nullplatform/technology-templates-nodejs \
 #   tests/smoke_bitbucket_live
 #
-# Add KEEP=1 to skip the cleanup and inspect the repository afterwards.
+# Add KEEP=1 to skip the cleanup and inspect the repository afterwards, and
+# SMOKE_NICKNAME=<workspace member nickname> to also exercise collaborator
+# resolution.
+#
+# This is also the only thing that proves the credential plumbing still
+# authenticates: curl reads it from a 0600 config file and git gets it as a
+# URL-matched extraHeader, and a mistake in either passes every stubbed test and
+# fails every real call.
 
 cd "$(dirname "$0")/.." || exit 1
 
@@ -96,6 +103,21 @@ if [[ "$SECURED" != "true" ]]; then
 fi
 
 echo "ok  NULLPLATFORM_API_KEY stored with secured:true"
+
+# A nickname collaborator must resolve to an Atlassian account_id through the
+# workspace member list. Set SMOKE_NICKNAME to a member of the workspace to
+# exercise it; skipped when unset.
+if [[ -n "${SMOKE_NICKNAME:-}" ]]; then
+  export CODE_REPOSITORY_COLLABORATORS="[{\"id\":\"${SMOKE_NICKNAME}\",\"role\":\"developer\",\"type\":\"user\"}]"
+
+  echo ""
+  echo "--- add_collaborators (nickname '${SMOKE_NICKNAME}') ---"
+
+  # shellcheck disable=SC1090
+  source scripts/code-repo/bitbucket/add_collaborators || exit 1
+
+  echo "ok  nickname collaborator resolved and granted"
+fi
 
 if [[ -n "${KEEP:-}" ]]; then
   echo ""

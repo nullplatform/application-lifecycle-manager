@@ -51,14 +51,12 @@ immediately with an explicit message instead of part-way through the workflow.
 
 Configure a `bitbucket-configuration` code-repository provider with:
 
-| Attribute (provider `setup`) | NRN key | Required | Source | Notes |
-|---|---|---|---|---|
 | Attribute | Required | Source | Notes |
 |---|---|---|---|
 | `setup.workspace` | yes | provider or env | The Bitbucket workspace slug. |
 | `setup.project_key` | yes | provider or env | The key of the project new repositories are filed under. **Not optional**: omit it and Bitbucket silently assigns the repository to the workspace's oldest project. |
-| `setup.installation_url` | no | provider or env | Defaults to `https://bitbucket.org`. |
-| `access.default_collaborators` | no | provider | See the limitation below. |
+| `setup.installation_url` | no | provider or env | Defaults to `https://bitbucket.org`. Drives the web UI and git remote hosts. The REST host is separate (`BITBUCKET_API_BASE`, default `https://api.bitbucket.org/2.0`), because Bitbucket Cloud serves its API from a different host. |
+| `access.collaborators` | no | provider | See the limitation below. `access.default_collaborators` is accepted too, for parity with the GitLab provider. |
 
 The credential is **not** part of the provider configuration. Both halves of it are environment
 variables on the ALM deployment:
@@ -87,6 +85,14 @@ variables on the ALM deployment:
 > from the environment (`BITBUCKET_WORKSPACE`, `BITBUCKET_PROJECT_KEY`, `BITBUCKET_INSTALLATION_URL`),
 > which always wins over the provider record. If the token or the email is missing, provisioning
 > fails immediately with a message explaining exactly this.
+
+**Collaborators.** A user is addressed by Atlassian `account_id`, by Bitbucket UUID (braces
+included), or by workspace **nickname** — nicknames are resolved through the workspace member list,
+so the same collaborator ids the platform stores for GitLab and GitHub work here. An **email address
+cannot be used**: Bitbucket removed emails from its API. `type` is `user` or `group`, and `team` is
+accepted as a synonym of `group` for GitHub-shaped configurations. Roles are `read`, `write` and
+`admin`; the GitLab role names (`guest`, `reporter`, `developer`, `maintainer`, `owner`) are mapped
+onto them.
 
 **Limitation — collaborators must already be workspace members.** Bitbucket has no API to
 invite a user to a workspace, so `add_collaborators` can only *grant repository permissions* to
