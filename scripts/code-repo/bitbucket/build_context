@@ -131,7 +131,14 @@ fi
 # repository_url by EXACT string) would break. Normalise here, once.
 
 REPOSITORY_SLUG="${REPOSITORY_NAME%.git}"
-REPOSITORY_SLUG=$(echo "$REPOSITORY_SLUG" | tr '[:upper:]' '[:lower:]')
+
+# Bitbucket keeps [a-z0-9._-] and folds every other character into '-', so
+# "My Service (v2)" becomes "my-service-v2". Reproduce that here rather than
+# discovering the difference from links.html.href afterwards. Runs of invalid
+# characters collapse into a single '-', and leading/trailing ones are dropped.
+REPOSITORY_SLUG=$(printf '%s' "$REPOSITORY_SLUG" \
+  | tr '[:upper:]' '[:lower:]' \
+  | sed -e 's/[^a-z0-9._-]\{1,\}/-/g' -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//')
 
 if [[ -z "$REPOSITORY_SLUG" ]]; then
   bb_fail "Could not derive a repository slug from REPOSITORY_NAME='$REPOSITORY_NAME'"
