@@ -21,6 +21,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
+- Throttled (`429`) and transient `5xx` Bitbucket responses are now retried with backoff, instead of
+  aborting provisioning after the repository was already created.
+- Bitbucket pipeline variables are now listed across every page, so an existing secret is found and
+  updated even when the repository holds more than 100 variables.
+- A Bitbucket secret value containing a tab is no longer stored with a literal `\t` in place of it.
 - Bitbucket API and git calls no longer pass the API token, or a secret request body, as a
   command-line argument, where any local process could read it from `ps` / `/proc`. curl reads the
   credential from a `0600` config file and git receives it as a URL-matched `extraHeader` through the

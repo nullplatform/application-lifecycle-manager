@@ -64,18 +64,74 @@ bb_api() {
     args+=(--data "@$body_file")
   fi
 
-  # BB_HTTP_CODE and BB_BODY are the outputs of bb_api: they are read by the
-  # step scripts that source this file, so they are not unused here.
-  # shellcheck disable=SC2034
-  BB_HTTP_CODE=$(curl "${args[@]}" "${BITBUCKET_API_BASE}${path}")
-  # shellcheck disable=SC2034
-  BB_BODY=$(cat "$tmp")
+  local attempt=1
+  local delay="${BB_RETRY_DELAY:-2}"
+  local max="${BB_MAX_ATTEMPTS:-3}"
+
+  while true; do
+    # BB_HTTP_CODE and BB_BODY are the outputs of bb_api: they are read by the
+    # step scripts that source this file, so they are not unused here.
+    # shellcheck disable=SC2034
+    BB_HTTP_CODE=$(curl "${args[@]}" "${BITBUCKET_API_BASE}${path}")
+    # shellcheck disable=SC2034
+    BB_BODY=$(cat "$tmp")
+
+    if [[ "$attempt" -ge "$max" ]]; then
+      break
+    fi
+
+    # 429 is Bitbucket's throttle and 5xx is transient. Everything else is a
+    # decision only the caller can make, on the code itself.
+    case "$BB_HTTP_CODE" in
+      429 | 500 | 502 | 503 | 504)
+        echo "Bitbucket returned HTTP $BB_HTTP_CODE for $method $path, retrying in ${delay}s"
+        sleep "$delay"
+        delay=$((delay * 2))
+        attempt=$((attempt + 1))
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
 
   rm -f "$tmp" "$cfg"
 
   if [[ -n "$body_file" ]]; then
     rm -f "$body_file"
   fi
+}
+
+# bb_api_values METHOD PATH
+#
+# Walks Bitbucket's `next` pagination and sets BB_VALUES to ONE json array holding
+# every `.values` entry. Bitbucket caps pagelen at 100, and a repository can hold
+# more variables (or a workspace more members) than that, so a single page is
+# never a safe assumption. BB_HTTP_CODE is left at the first non-200 code seen.
+bb_api_values() {
+  local method="$1"
+  local path="$2"
+
+  # shellcheck disable=SC2034
+  BB_VALUES="[]"
+
+  local next_path="$path"
+
+  while [[ -n "$next_path" ]]; do
+    bb_api "$method" "$next_path"
+
+    if [[ "$BB_HTTP_CODE" != "200" ]]; then
+      return
+    fi
+
+    # shellcheck disable=SC2034
+    BB_VALUES=$(jq -nc --argjson acc "$BB_VALUES" --argjson page "$BB_BODY" \
+      '$acc + ($page.values // [])')
+
+    # `next` is an absolute URL; bb_api takes a path relative to the API base.
+    next_path=$(echo "$BB_BODY" | jq -r --arg base "$BITBUCKET_API_BASE" \
+      'if .next then (.next | sub("^" + $base; "")) else "" end')
+  done
 }
 
 # bb_encode_uuid VALUE
