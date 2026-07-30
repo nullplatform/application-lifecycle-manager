@@ -1,0 +1,53 @@
+#!/bin/bash
+# A seed failure happens AFTER the repository exists, so the operator is left with
+# an empty repo and a retry that dies on "already exists but strategy is set to
+# 'create'". The message has to say what to do about that, and the temporary tree
+# has to be cleaned up.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export REPOSITORY_URL="https://bitbucket.org/acme/my-service"
+export TEMPLATE_URL="https://github.com/nullplatform/technology-templates-nodejs"
+
+# A git that fails the clone, and records the temporary directory it was given so
+# the test can check it was removed.
+cat > "$TEST_TMP/git" <<'EOF'
+#!/bin/bash
+printf 'git\t%s\n' "$*" >> "$BB_CALLS"
+
+if [[ "$1" == "clone" ]]; then
+  for arg in "$@"; do target="$arg"; done
+  printf '%s\n' "$target" > "$TEST_TMP/seed_dir"
+  echo "fatal: could not read from remote repository" >&2
+  exit 128
+fi
+
+exit 0
+EOF
+chmod +x "$TEST_TMP/git"
+export TEST_TMP
+export PATH="$TEST_TMP:$PATH"
+
+fixture POST "/repositories/acme/my-service" 200 \
+  '{"links":{"html":{"href":"https://bitbucket.org/acme/my-service"}}}'
+
+run_step create_repository
+
+assert_status 1 || exit 1
+assert_contains "Failed to clone the template" || exit 1
+assert_contains "was already created and is EMPTY" || exit 1
+assert_contains "retry with the 'import' strategy" || exit 1
+
+seed_dir=$(cat "$TEST_TMP/seed_dir" 2>/dev/null)
+
+if [[ -z "$seed_dir" ]]; then
+  echo "  FAIL: the git stub never recorded a seed directory"
+  exit 1
+fi
+
+if [[ -d "$seed_dir" ]]; then
+  echo "  FAIL: the seed directory '$seed_dir' was left behind"
+  exit 1
+fi

@@ -147,6 +147,36 @@ bb_encode_uuid() {
   printf '%s' "$value"
 }
 
+# bb_resolve_or_fail VAR JQ_PATH ERROR_MESSAGE
+#
+# Resolves a non-secret setup value: the environment first (that is how ALM
+# overrides the platform), then the provider record, then fail. Sets VAR in the
+# caller's scope.
+#
+# Only for values whose absence is fatal and whose value is safe to log.
+# installation_url defaults instead of failing, and api_token must never be
+# echoed, so both stay written out in build_context.
+bb_resolve_or_fail() {
+  local var="$1"
+  local jq_path="$2"
+  local message="$3"
+
+  local value="${!var:-}"
+
+  if [[ -n "$value" ]]; then
+    echo "Using $var from environment: $value"
+  else
+    value=$(echo "$CODE_REPOSITORY" | jq -r "${jq_path} // empty")
+    echo "No $var in environment, using value from platform: $value"
+  fi
+
+  if [[ -z "$value" ]]; then
+    bb_fail "$message"
+  fi
+
+  printf -v "$var" '%s' "$value"
+}
+
 # bb_urlencode VALUE
 #
 # Percent-encodes a value for use as a single path segment. Group slugs can carry

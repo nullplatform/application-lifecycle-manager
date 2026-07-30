@@ -7,16 +7,8 @@ source "$CURRENT_DIR/_api"
 
 # --- workspace -------------------------------------------------------------
 
-if [[ -n "${BITBUCKET_WORKSPACE:-}" ]]; then
-  echo "Using BITBUCKET_WORKSPACE from environment: $BITBUCKET_WORKSPACE"
-else
-  BITBUCKET_WORKSPACE=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.workspace // empty')
-  echo "No BITBUCKET_WORKSPACE in environment, using value from platform: $BITBUCKET_WORKSPACE"
-fi
-
-if [[ -z "$BITBUCKET_WORKSPACE" ]]; then
-  bb_fail "BITBUCKET_WORKSPACE is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.workspace / bitbucket.workspace) or in the environment."
-fi
+bb_resolve_or_fail BITBUCKET_WORKSPACE '.attributes.setup.workspace' \
+  "BITBUCKET_WORKSPACE is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.workspace / bitbucket.workspace) or in the environment."
 
 # --- installation URL and API base -----------------------------------------
 
@@ -65,28 +57,22 @@ BITBUCKET_API_BASE="${BITBUCKET_API_BASE%/}"
 # username `x-bitbucket-api-token-auth` with the token as the password.
 #
 # CREDENTIAL SOURCING -- this is where Bitbucket DIFFERS from GitLab.
-# The token is a real SECRET: the bitbucket-configuration spec marks api_token
-# `secret: true`, and providers-api NULLIFIES secret attribute values on
-# authenticated reads (nullifySecrets in ProviderController). So `np provider
-# list` returns .attributes.setup.api_token = null -- the platform read CANNOT
-# supply the token. (GitLab's flow only works because its spec never marked
-# access_token secret, a laxity we deliberately did not copy.) Therefore the
-# token's primary, documented source is the BITBUCKET_API_TOKEN environment
-# variable set on the ALM deployment. The record path is still read (harmless
-# null in production; forward-compatible if a privileged read is ever wired in),
-# but env wins. The non-secret fields (workspace, email, project_key,
+# The bitbucket-configuration specification declares NO credential fields at all
+# (see main-providers-api, seeder 20260713000000). That is deliberate:
+# providers-api NULLIFIES secret attribute values on authenticated reads
+# (nullifySecrets in ProviderController), so a token stored on the provider would
+# come back from `np provider list` as null and could never reach this workflow.
+# GitLab's flow only works because its spec never marked access_token secret, a
+# laxity we deliberately did not copy.
+#
+# So both halves of the credential come from the environment: the email (the HTTP
+# Basic username) and the token. The record paths below are still read as a
+# harmless no-op, in case a privileged read is ever wired in, but env is the
+# documented source. The configuration fields (workspace, project_key,
 # installation_url) DO come back from the provider read as normal.
 
-if [[ -n "${BITBUCKET_EMAIL:-}" ]]; then
-  echo "Using BITBUCKET_EMAIL from environment: $BITBUCKET_EMAIL"
-else
-  BITBUCKET_EMAIL=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.email // empty')
-  echo "No BITBUCKET_EMAIL in environment, using value from platform: $BITBUCKET_EMAIL"
-fi
-
-if [[ -z "$BITBUCKET_EMAIL" ]]; then
-  bb_fail "BITBUCKET_EMAIL is not set. It is the HTTP Basic username that pairs with BITBUCKET_API_TOKEN, so it lives next to the token in the environment of the ALM deployment, NOT on the bitbucket-configuration provider (the provider carries configuration only, no credentials). Set it to the bot user's Atlassian account email."
-fi
+bb_resolve_or_fail BITBUCKET_EMAIL '.attributes.setup.email' \
+  "BITBUCKET_EMAIL is not set. It is the HTTP Basic username that pairs with BITBUCKET_API_TOKEN, so it lives next to the token in the environment of the ALM deployment, NOT on the bitbucket-configuration provider (which carries configuration only, no credentials). Set it to the bot user's Atlassian account email."
 
 if [[ -n "${BITBUCKET_API_TOKEN:-}" ]]; then
   echo "Using BITBUCKET_API_TOKEN from environment (hidden)"
@@ -110,16 +96,8 @@ fi
 # Bitbucket does not error -- it SILENTLY files the repo under the workspace's
 # OLDEST project. Refuse to run rather than mis-file the customer's repository.
 
-if [[ -n "${BITBUCKET_PROJECT_KEY:-}" ]]; then
-  echo "Using BITBUCKET_PROJECT_KEY from environment: $BITBUCKET_PROJECT_KEY"
-else
-  BITBUCKET_PROJECT_KEY=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.project_key // empty')
-  echo "No BITBUCKET_PROJECT_KEY in environment, using value from platform: $BITBUCKET_PROJECT_KEY"
-fi
-
-if [[ -z "$BITBUCKET_PROJECT_KEY" ]]; then
-  bb_fail "BITBUCKET_PROJECT_KEY is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.project_key / NRN bitbucket.projectKey) or in the environment. It cannot be omitted: Bitbucket would silently assign the new repository to the oldest project in the workspace."
-fi
+bb_resolve_or_fail BITBUCKET_PROJECT_KEY '.attributes.setup.project_key' \
+  "BITBUCKET_PROJECT_KEY is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.project_key / NRN bitbucket.projectKey) or in the environment. It cannot be omitted: Bitbucket would silently assign the new repository to the oldest project in the workspace."
 
 # --- repository slug -------------------------------------------------------
 #

@@ -99,43 +99,48 @@ else
 
   SEED_DIR=$(mktemp -d)
 
+  # Every seed step has to clean the temporary tree up before failing the
+  # workflow, and every one of them carries the same hint, so wrap the pattern
+  # once. Guarded so that re-sourcing this file cannot redefine it mid-run.
+  if ! type -t seed_or_fail >/dev/null 2>&1; then
+    seed_or_fail() {
+      local message="$1"
+      shift
+
+      # bb_git_authed for every call: the credential is a URL-matched
+      # http.<url>.extraHeader, so the local operations (init, add, commit) never
+      # look at it, and one call shape is easier to keep right than two.
+      if ! bb_git_authed "$@"; then
+        rm -rf "$SEED_DIR"
+        bb_fail "$message. $SEED_FAILURE_HINT"
+      fi
+    }
+  fi
+
   echo "Seeding $BITBUCKET_REPOSITORY_URL from template $TEMPLATE_URL"
 
-  if ! bb_git_authed clone --depth 1 "$CLONE_URL" "$SEED_DIR"; then
-    rm -rf "$SEED_DIR"
-    bb_fail "Failed to clone the template $TEMPLATE_URL. $SEED_FAILURE_HINT"
-  fi
+  seed_or_fail "Failed to clone the template $TEMPLATE_URL" \
+    clone --depth 1 "$CLONE_URL" "$SEED_DIR"
 
   # Drop the template's history entirely.
   rm -rf "${SEED_DIR:?}/.git"
 
-  if ! bb_git -C "$SEED_DIR" init; then
-    rm -rf "$SEED_DIR"
-    bb_fail "Failed to initialise the seed repository. $SEED_FAILURE_HINT"
-  fi
+  seed_or_fail "Failed to initialise the seed repository" -C "$SEED_DIR" init
 
-  if ! bb_git -C "$SEED_DIR" add -A; then
-    rm -rf "$SEED_DIR"
-    bb_fail "Failed to stage the template files. $SEED_FAILURE_HINT"
-  fi
+  seed_or_fail "Failed to stage the template files" -C "$SEED_DIR" add -A
 
   # The agent container has no git identity configured, so pass one inline
   # rather than mutating global git config.
-  if ! bb_git -C "$SEED_DIR" \
+  seed_or_fail "Failed to create the initial commit" -C "$SEED_DIR" \
     -c user.email="ci@nullplatform.com" \
     -c user.name="nullplatform" \
-    commit -m "Initial commit from template"; then
-    rm -rf "$SEED_DIR"
-    bb_fail "Failed to create the initial commit. $SEED_FAILURE_HINT"
-  fi
+    commit -m "Initial commit from template"
 
   # Push HEAD to an explicit ref, so the local branch name (which varies with
   # the git version's init.defaultBranch) does not matter. This is the first ref
   # in the repo, so Bitbucket makes it the default branch.
-  if ! bb_git_authed -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"; then
-    rm -rf "$SEED_DIR"
-    bb_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL. $SEED_FAILURE_HINT"
-  fi
+  seed_or_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL" \
+    -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"
 
   rm -rf "$SEED_DIR"
 
