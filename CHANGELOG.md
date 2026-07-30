@@ -14,6 +14,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Bitbucket Cloud code repository support (`scripts/code-repo/bitbucket`), authenticated with a
   dedicated bot user's Atlassian API token over HTTP Basic (the only credential that can enable
   Bitbucket Pipelines).
+- Importing a Bitbucket repository now stops any pipeline already running on the default branch
+  before triggering the first build, matching the GitHub provider's cancel-then-run behavior.
 
 ### Changed
 - The `ci` API key is now stored in the created repository as `NULLPLATFORM_API_KEY`, the name the

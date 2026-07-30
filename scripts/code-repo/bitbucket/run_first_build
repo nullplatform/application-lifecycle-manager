@@ -61,6 +61,45 @@ if [[ "$PIPELINES_ENABLED" != "true" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 1b. Reconcile what is already running (import strategy only).
+#
+# A freshly created repository cannot have pipelines yet -- Pipelines is enabled
+# after the seed push -- but an imported one can, and triggering on top of an
+# in-flight build leaves two builds racing for the same branch. This mirrors the
+# GitHub step, which cancels in-progress runs before re-running.
+# ---------------------------------------------------------------------------
+
+if [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
+  bb_api_values GET "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/?sort=-created_on&pagelen=20"
+
+  if [[ "$BB_HTTP_CODE" == "200" ]]; then
+    while read -r uuid; do
+      [[ -z "$uuid" ]] && continue
+
+      encoded=$(bb_encode_uuid "$uuid")
+
+      echo "Stopping in-flight pipeline $uuid on branch '$BRANCH'"
+
+      bb_api POST "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/${encoded}/stopPipeline"
+
+      case "$BB_HTTP_CODE" in
+        200 | 202 | 204)
+          echo "Stopped $uuid"
+          ;;
+        *)
+          echo "Warning: could not stop pipeline $uuid (HTTP $BB_HTTP_CODE): $BB_BODY"
+          ;;
+      esac
+    done < <(echo "$BB_VALUES" | jq -r --arg branch "$BRANCH" \
+      '.[]? | select(.target.ref_name == $branch)
+            | select(.state.name == "IN_PROGRESS" or .state.name == "PENDING")
+            | .uuid')
+  else
+    echo "Warning: could not list the existing pipelines of ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} (HTTP $BB_HTTP_CODE): $BB_BODY"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 2. Trigger the first build.
 #
 # Note the TRAILING SLASH on /pipelines/ -- the endpoint is spelled that way.
