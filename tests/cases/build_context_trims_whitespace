@@ -1,0 +1,29 @@
+#!/bin/bash
+# A value pasted into the provider form with a stray space used to be interpolated
+# straight into a URL: "https://bitbucket.org/ acme/my-service". Bitbucket then
+# answered with a code that said nothing about the real cause.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+clear_context
+
+export BITBUCKET_EMAIL="bot@nullplatform.com"
+export BITBUCKET_API_TOKEN="env-token-xyz"
+export REPOSITORY_NAME="my-service"
+export CODE_REPOSITORY='{"attributes":{"setup":{
+  "workspace":"  acme  ",
+  "project_key":" APP "
+}}}'
+
+workspace=$(capture_export build_context BITBUCKET_WORKSPACE)
+project_key=$(capture_export build_context BITBUCKET_PROJECT_KEY)
+
+if [[ "$workspace" != "acme" ]]; then
+  echo "  FAIL: expected workspace 'acme', got '$workspace'"
+  exit 1
+fi
+
+if [[ "$project_key" != "APP" ]]; then
+  echo "  FAIL: expected project_key 'APP', got '$project_key'"
+  exit 1
+fi

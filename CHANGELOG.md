@@ -23,6 +23,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
+- Bitbucket step failures are now reported on stdout, so they reach the nullplatform activity log.
+  `entrypoint` captures only the workflow's stdout, so every error the provider raised on stderr was
+  lost and the operator saw just "error: exit status 1".
+- Bitbucket configuration values are trimmed, so a workspace or project key pasted with a stray space
+  no longer produces a malformed URL and an unrelated HTTP error.
 - Bitbucket collaborators given as workspace nicknames are now resolved to Atlassian account ids,
   `type: "team"` is accepted as a group, group ids are URL-encoded, and a `404` no longer blames
   workspace membership when the repository itself is unreachable. An email address is now refused

@@ -1,0 +1,25 @@
+#!/bin/bash
+# entrypoint captures the workflow's STDOUT (`logs=$(np service workflow exec ...)`)
+# and forwards it to nullplatform. A failure reported on stderr never reaches the
+# operator, who then sees only "error: exit status 1" -- which is exactly what
+# happened in a real run.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export TEMPLATE_URL='ext::sh -c id'
+
+# stdout only: stderr is discarded, so anything asserted below travelled on stdout.
+stdout=$(
+  cd "$REPO_ROOT" || exit 1
+  # shellcheck disable=SC1090
+  source scripts/code-repo/bitbucket/create_repository 2>/dev/null
+)
+
+if [[ "$stdout" != *"TEMPLATE_URL must be an https:// URL"* ]]; then
+  echo "  FAIL: bb_fail's message did not reach stdout, so the platform log would"
+  echo "        show only 'error: exit status 1'. stdout was:"
+  printf '%s\n' "$stdout" | sed 's/^/    /'
+  exit 1
+fi

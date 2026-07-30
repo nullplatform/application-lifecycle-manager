@@ -170,6 +170,12 @@ bb_resolve_or_fail() {
     echo "No $var in environment, using value from platform: $value"
   fi
 
+  # Trim surrounding whitespace. A value pasted into the provider form with a
+  # stray space is otherwise interpolated straight into a URL, and Bitbucket
+  # answers with a code that says nothing about the real cause.
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+
   if [[ -z "$value" ]]; then
     bb_fail "$message"
   fi
@@ -187,28 +193,35 @@ bb_urlencode() {
 
 # bb_resolve_principal ID
 #
-# Prints a path-ready Bitbucket user identifier for ID, or returns 1 with the
-# reason on stderr. Bitbucket addresses users by account_id or UUID only --
-# usernames were removed for GDPR -- but the platform stores the same collaborator
-# ids for every provider, so a nickname has to be looked up.
+# Sets BB_PRINCIPAL to a path-ready Bitbucket user identifier and returns 0, or
+# sets BB_RESOLVE_ERROR and returns 1. Both are globals rather than stdout: the
+# caller has to be able to PRINT the reason, and stdout here is the return
+# channel. Bitbucket addresses users by account_id or UUID only -- usernames were
+# removed for GDPR -- but the platform stores the same collaborator ids for every
+# provider, so a nickname has to be looked up.
 bb_resolve_principal() {
   local id="$1"
 
+  # shellcheck disable=SC2034
+  BB_PRINCIPAL=""
+  # shellcheck disable=SC2034
+  BB_RESOLVE_ERROR=""
+
   # Already addressable: {uuid} or an Atlassian account_id (712020:uuid).
   if [[ "$id" == \{*\} || "$id" == *:* ]]; then
-    bb_encode_uuid "$id"
+    BB_PRINCIPAL=$(bb_encode_uuid "$id")
     return 0
   fi
 
   if [[ "$id" == *@* ]]; then
-    echo "Error: collaborator '$id' cannot be resolved from an email address: Bitbucket removed emails from its API for GDPR. Configure the Atlassian account_id or the workspace nickname instead." >&2
+    BB_RESOLVE_ERROR="Error: collaborator '$id' cannot be resolved from an email address: Bitbucket removed emails from its API for GDPR. Configure the Atlassian account_id or the workspace nickname instead."
     return 1
   fi
 
   bb_api_values GET "/workspaces/${BITBUCKET_WORKSPACE}/members?pagelen=100"
 
   if [[ "$BB_HTTP_CODE" != "200" ]]; then
-    echo "Error: could not list the members of workspace '$BITBUCKET_WORKSPACE' to resolve collaborator '$id' (HTTP $BB_HTTP_CODE): $BB_BODY" >&2
+    BB_RESOLVE_ERROR="Error: could not list the members of workspace '$BITBUCKET_WORKSPACE' to resolve collaborator '$id' (HTTP $BB_HTTP_CODE): $BB_BODY"
     return 1
   fi
 
@@ -217,11 +230,13 @@ bb_resolve_principal() {
     '.[]? | select(.user.nickname == $nickname) | .user.account_id // empty' | head -1)
 
   if [[ -z "$account_id" ]]; then
-    echo "Error: collaborator '$id' is not a member of the '$BITBUCKET_WORKSPACE' workspace: no member has that nickname." >&2
+    # shellcheck disable=SC2034
+    BB_RESOLVE_ERROR="Error: collaborator '$id' is not a member of the '$BITBUCKET_WORKSPACE' workspace: no member has that nickname."
     return 1
   fi
 
-  bb_urlencode "$account_id"
+  # shellcheck disable=SC2034
+  BB_PRINCIPAL=$(bb_urlencode "$account_id")
 }
 
 # bb_scrub
@@ -290,6 +305,11 @@ bb_git_authed() {
 
 # bb_fail MESSAGE...
 bb_fail() {
-  echo "Error: $*" >&2
+  # stdout, NOT stderr. entrypoint captures the workflow's stdout
+  # (`logs=$(np service workflow exec ...)`) and forwards it to nullplatform;
+  # anything on stderr never reaches the operator, who then sees only
+  # "error: exit status 1". This is why the gitlab and github steps report with a
+  # plain echo.
+  echo "Error: $*"
   exit 1
 }

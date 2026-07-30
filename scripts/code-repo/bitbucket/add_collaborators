@@ -40,10 +40,13 @@ while read -r collaborator; do
   if [[ "$type" == "user" ]]; then
     # Users are addressed by account_id or UUID (usernames were removed for
     # GDPR), so a nickname is resolved through the workspace member list.
-    if ! encoded=$(bb_resolve_principal "$id"); then
+    if ! bb_resolve_principal "$id"; then
+      echo "$BB_RESOLVE_ERROR"
       FAILED=1
       continue
     fi
+
+    encoded="$BB_PRINCIPAL"
 
     echo "Granting '$permission' on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} to user '$id'"
 
@@ -87,13 +90,13 @@ while read -r collaborator; do
 done < <(echo "$CODE_REPOSITORY_COLLABORATORS" | jq -c '.[]?' 2>/dev/null)
 
 if [[ ${#MISSING_MEMBERS[@]} -gt 0 ]]; then
-  echo "Error: the following collaborators are not members of the '$BITBUCKET_WORKSPACE' Bitbucket workspace:" >&2
+  echo "Error: the following collaborators are not members of the '$BITBUCKET_WORKSPACE' Bitbucket workspace:"
 
   for member in "${MISSING_MEMBERS[@]}"; do
-    echo "  - $member" >&2
+    echo "  - $member"
   done
 
-  echo "Bitbucket has no API to invite a user to a workspace, so nullplatform cannot add them for you. A workspace administrator must invite them at ${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/workspace/settings/members first. The repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} has already been created: once they are members, re-run this application creation with the 'import' strategy." >&2
+  echo "Bitbucket has no API to invite a user to a workspace, so nullplatform cannot add them for you. A workspace administrator must invite them at ${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/workspace/settings/members first. The repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} has already been created: once they are members, re-run this application creation with the 'import' strategy."
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then
