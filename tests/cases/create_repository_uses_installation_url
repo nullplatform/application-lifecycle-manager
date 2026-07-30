@@ -1,0 +1,31 @@
+#!/bin/bash
+# A configured installation_url must drive the git push URL. It used to be
+# hardcoded to bitbucket.org, so the configured value was silently ignored --
+# the kind of bug that only shows up in a customer's environment.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export BITBUCKET_INSTALLATION_URL="https://git.acme.internal"
+export CODE_REPOSITORY_STRATEGY="create"
+export REPOSITORY_URL="https://git.acme.internal/acme/my-service"
+export TEMPLATE_URL="https://github.com/nullplatform/technology-templates-nodejs"
+
+fixture POST "/repositories/acme/my-service" 200 \
+  '{"links":{"html":{"href":"https://git.acme.internal/acme/my-service"}}}'
+
+run_step create_repository
+
+assert_status 0 || exit 1
+
+if ! grep -q "git.acme.internal/acme/my-service.git" "$BB_CALLS"; then
+  echo "  FAIL: push did not target the configured installation_url. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+if grep -q "bitbucket.org/acme/my-service.git" "$BB_CALLS"; then
+  echo "  FAIL: push targeted the hardcoded bitbucket.org host. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

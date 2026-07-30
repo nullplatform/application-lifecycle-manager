@@ -91,13 +91,19 @@ else
 
   CLONE_URL="$TEMPLATE_URL"
 
+  # Every seed failure below happens AFTER the repository exists, so the operator
+  # is left with an empty repo and a retry that dies on "already exists but
+  # strategy is set to 'create'". We do not delete it -- a repository is not ours
+  # to destroy once created -- so say what to do about it instead.
+  SEED_FAILURE_HINT="The repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} was already created and is EMPTY. Either delete it at ${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/admin and retry, or push the template by hand and retry with the 'import' strategy."
+
   SEED_DIR=$(mktemp -d)
 
   echo "Seeding $BITBUCKET_REPOSITORY_URL from template $TEMPLATE_URL"
 
   if ! bb_git_authed clone --depth 1 "$CLONE_URL" "$SEED_DIR"; then
     rm -rf "$SEED_DIR"
-    bb_fail "Failed to clone the template $TEMPLATE_URL"
+    bb_fail "Failed to clone the template $TEMPLATE_URL. $SEED_FAILURE_HINT"
   fi
 
   # Drop the template's history entirely.
@@ -105,12 +111,12 @@ else
 
   if ! bb_git -C "$SEED_DIR" init; then
     rm -rf "$SEED_DIR"
-    bb_fail "Failed to initialise the seed repository"
+    bb_fail "Failed to initialise the seed repository. $SEED_FAILURE_HINT"
   fi
 
   if ! bb_git -C "$SEED_DIR" add -A; then
     rm -rf "$SEED_DIR"
-    bb_fail "Failed to stage the template files"
+    bb_fail "Failed to stage the template files. $SEED_FAILURE_HINT"
   fi
 
   # The agent container has no git identity configured, so pass one inline
@@ -120,7 +126,7 @@ else
     -c user.name="nullplatform" \
     commit -m "Initial commit from template"; then
     rm -rf "$SEED_DIR"
-    bb_fail "Failed to create the initial commit"
+    bb_fail "Failed to create the initial commit. $SEED_FAILURE_HINT"
   fi
 
   # Push HEAD to an explicit ref, so the local branch name (which varies with
@@ -128,7 +134,7 @@ else
   # in the repo, so Bitbucket makes it the default branch.
   if ! bb_git_authed -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"; then
     rm -rf "$SEED_DIR"
-    bb_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL"
+    bb_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL. $SEED_FAILURE_HINT"
   fi
 
   rm -rf "$SEED_DIR"
