@@ -14,6 +14,18 @@ if ! command -v git >/dev/null 2>&1; then
   bb_fail "git is required to seed a Bitbucket repository from a template (Bitbucket Cloud has no import API) but it was not found on PATH."
 fi
 
+# TEMPLATE_URL arrives from `np template read` and is handed to a LOCAL git clone
+# below, because Bitbucket Cloud has no import API. git's transports include
+# ext:: (which runs a command), file:// and ssh:// with option-injection, so an
+# unvalidated URL here is code execution inside this container. GitLab and GitHub
+# do not have this exposure: they hand the URL to the remote's own import API.
+#
+# Validate BEFORE creating anything. Failing after the create would leave an
+# empty orphan repository, and the retry would then hit "already exists".
+if [[ -n "${TEMPLATE_URL:-}" && "$TEMPLATE_URL" != "null" && "$TEMPLATE_URL" != https://* ]]; then
+  bb_fail "TEMPLATE_URL must be an https:// URL, got '$TEMPLATE_URL'. Templates are seeded with a local git clone, so every other transport (ext::, file://, ssh://, fd::) is refused."
+fi
+
 # ---------------------------------------------------------------------------
 # 1. Create the (empty) repository.
 #

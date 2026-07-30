@@ -21,6 +21,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
+- The Bitbucket provider now refuses a template URL that is not `https://`, and restricts git to the
+  https transport while seeding. A crafted template URL could otherwise reach a local `git clone` and
+  run commands in the workflow container through git's `ext::` transport.
 - `bitbucket` is now recognized by the code repository provider lookup. Selecting it previously
   failed with "unknown code repository provider" unless `CODE_REPOSITORY_SPECIFICATION_ID` was set
   by hand.

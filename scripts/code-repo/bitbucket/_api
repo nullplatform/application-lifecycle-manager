@@ -102,7 +102,11 @@ bb_git() {
   local output
   local status
 
-  output=$(GIT_TERMINAL_PROMPT=0 git "$@" 2>&1)
+  # GIT_ALLOW_PROTOCOL is the belt to the TEMPLATE_URL check's braces in
+  # create_repository: even if a crafted URL ever slipped past that string check,
+  # git itself refuses any transport other than https. It covers submodule URLs
+  # inside a cloned template too, which the string check never sees.
+  output=$(GIT_TERMINAL_PROMPT=0 GIT_ALLOW_PROTOCOL=https git "$@" 2>&1)
   status=$?
 
   if [[ -n "$output" ]]; then
