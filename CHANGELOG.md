@@ -21,6 +21,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
+- `bitbucket` is now recognized by the code repository provider lookup. Selecting it previously
+  failed with "unknown code repository provider" unless `CODE_REPOSITORY_SPECIFICATION_ID` was set
+  by hand.
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
   no longer risk picking a configuration that belongs to a different provider.

@@ -1,0 +1,52 @@
+#!/bin/bash
+# The dispatcher must resolve CODE_REPOSITORY_PROVIDER=bitbucket to the
+# bitbucket-configuration specification and hand the workflow the bitbucket
+# script path. Before this it failed with "unknown code repository provider",
+# which made the provider unreachable unless CODE_REPOSITORY_SPECIFICATION_ID
+# was set by hand.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+BITBUCKET_SPEC_ID="ca7019c5-f7da-4b79-8fd6-28afbaea366b"
+
+export CODE_REPOSITORY_PROVIDER="bitbucket"
+export NRN="organization=1:account=2"
+export ACCOUNT_ID="2"
+export APPLICATION='{"repository_url":"https://bitbucket.org/acme/my-service"}'
+
+# np stub: `provider list` returns one bitbucket configuration, and the final
+# `np service workflow exec` is recorded so the test can assert the dispatcher
+# got that far instead of failing on the way.
+cat > "$TEST_TMP/np" <<EOF
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+if [[ "\$1" == "provider" ]]; then
+  echo '{"results":[{"id":"cfg-1","specification_id":"$BITBUCKET_SPEC_ID","attributes":{"setup":{"workspace":"acme"},"access":{}}}]}'
+else
+  echo '{}'
+fi
+EOF
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+output=$(cd "$REPO_ROOT" && source scripts/code-repo/create_code_repository 2>&1)
+status=$?
+
+if [[ "$status" -ne 0 ]]; then
+  echo "  FAIL: dispatcher exited $status:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi
+
+if [[ "$output" != *"Using bitbucket code repository configuration: cfg-1"* ]]; then
+  echo "  FAIL: dispatcher did not select the bitbucket configuration:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi
+
+if ! grep -q "service workflow exec" "$BB_CALLS"; then
+  echo "  FAIL: dispatcher never reached the workflow exec. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

@@ -43,8 +43,9 @@ its provider specification, so an account may hold configurations for several pr
 without them interfering. If you configured a **custom** provider specification, set
 `CODE_REPOSITORY_SPECIFICATION_ID` in the environment to point the lookup at it.
 
-`azure-devops` is recognized by the lookup but its scripts are not implemented yet, so selecting it
-fails immediately with an explicit message instead of part-way through the workflow.
+The lookup recognizes `github`, `gitlab`, `bitbucket` and `azure-devops`, so none of them needs
+`CODE_REPOSITORY_SPECIFICATION_ID`. `azure-devops` has no scripts here yet, so selecting it fails
+immediately with an explicit message instead of part-way through the workflow.
 
 #### Bitbucket Cloud
 

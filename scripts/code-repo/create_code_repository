@@ -42,6 +42,7 @@ code_repository_specification_id() {
   case "$1" in
     github)       echo "1043b379-9fa8-4d2d-bc18-9c5b0d3038f2" ;;
     gitlab)       echo "2ff2fe2f-6434-48be-aed2-be22d4d4e77c" ;;
+    bitbucket)    echo "ca7019c5-f7da-4b79-8fd6-28afbaea366b" ;;
     azure-devops) echo "cc9475fa-1cc2-41c0-a585-b97ee30decdb" ;;
     *) return 1 ;;
   esac
@@ -50,7 +51,7 @@ code_repository_specification_id() {
 if [[ -n "$CODE_REPOSITORY_SPECIFICATION_ID" ]]; then
   echo "Using CODE_REPOSITORY_SPECIFICATION_ID from environment: $CODE_REPOSITORY_SPECIFICATION_ID"
 elif ! CODE_REPOSITORY_SPECIFICATION_ID=$(code_repository_specification_id "$CODE_REPOSITORY_PROVIDER"); then
-  echo "ERROR: unknown code repository provider '$CODE_REPOSITORY_PROVIDER'. Known providers: github, gitlab, azure-devops."
+  echo "ERROR: unknown code repository provider '$CODE_REPOSITORY_PROVIDER'. Known providers: github, gitlab, bitbucket, azure-devops."
   echo "If you use a custom provider specification, set CODE_REPOSITORY_SPECIFICATION_ID in the environment."
   exit 1
 fi
