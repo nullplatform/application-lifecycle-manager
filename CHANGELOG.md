@@ -21,6 +21,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
+- Bitbucket collaborators given as workspace nicknames are now resolved to Atlassian account ids,
+  `type: "team"` is accepted as a group, group ids are URL-encoded, and a `404` no longer blames
+  workspace membership when the repository itself is unreachable. An email address is now refused
+  with an explicit message, since Bitbucket cannot resolve one.
 - Throttled (`429`) and transient `5xx` Bitbucket responses are now retried with backoff, instead of
   aborting provisioning after the repository was already created.
 - Bitbucket pipeline variables are now listed across every page, so an existing secret is found and

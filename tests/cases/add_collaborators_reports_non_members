@@ -9,6 +9,12 @@ export CODE_REPOSITORY_COLLABORATORS='[{"id":"{aaaa-bbbb}","role":"developer","t
 fixture PUT "/repositories/acme/my-service/permissions-config/users/%7Baaaa-bbbb%7D" 404 \
   '{"type":"error","error":{"message":"Not found"}}'
 
+# The 404 branch checks the repository before blaming workspace membership: a
+# wrong slug 404s exactly the same way. Here the repository is fine, so the
+# diagnosis must be "not a member".
+fixture GET "/repositories/acme/my-service" 200 \
+  '{"links":{"html":{"href":"https://bitbucket.org/acme/my-service"}}}'
+
 run_step add_collaborators
 
 assert_status 1 || exit 1

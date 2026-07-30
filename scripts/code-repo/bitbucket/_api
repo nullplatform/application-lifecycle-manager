@@ -147,6 +147,53 @@ bb_encode_uuid() {
   printf '%s' "$value"
 }
 
+# bb_urlencode VALUE
+#
+# Percent-encodes a value for use as a single path segment. Group slugs can carry
+# spaces and other characters that must not reach the URL raw.
+bb_urlencode() {
+  jq -rn --arg value "$1" '$value | @uri'
+}
+
+# bb_resolve_principal ID
+#
+# Prints a path-ready Bitbucket user identifier for ID, or returns 1 with the
+# reason on stderr. Bitbucket addresses users by account_id or UUID only --
+# usernames were removed for GDPR -- but the platform stores the same collaborator
+# ids for every provider, so a nickname has to be looked up.
+bb_resolve_principal() {
+  local id="$1"
+
+  # Already addressable: {uuid} or an Atlassian account_id (712020:uuid).
+  if [[ "$id" == \{*\} || "$id" == *:* ]]; then
+    bb_encode_uuid "$id"
+    return 0
+  fi
+
+  if [[ "$id" == *@* ]]; then
+    echo "Error: collaborator '$id' cannot be resolved from an email address: Bitbucket removed emails from its API for GDPR. Configure the Atlassian account_id or the workspace nickname instead." >&2
+    return 1
+  fi
+
+  bb_api_values GET "/workspaces/${BITBUCKET_WORKSPACE}/members?pagelen=100"
+
+  if [[ "$BB_HTTP_CODE" != "200" ]]; then
+    echo "Error: could not list the members of workspace '$BITBUCKET_WORKSPACE' to resolve collaborator '$id' (HTTP $BB_HTTP_CODE): $BB_BODY" >&2
+    return 1
+  fi
+
+  local account_id
+  account_id=$(echo "$BB_VALUES" | jq -r --arg nickname "$id" \
+    '.[]? | select(.user.nickname == $nickname) | .user.account_id // empty' | head -1)
+
+  if [[ -z "$account_id" ]]; then
+    echo "Error: collaborator '$id' is not a member of the '$BITBUCKET_WORKSPACE' workspace: no member has that nickname." >&2
+    return 1
+  fi
+
+  bb_urlencode "$account_id"
+}
+
 # bb_scrub
 #
 # stdin filter that redacts the API token. git prints credentialed remote URLs

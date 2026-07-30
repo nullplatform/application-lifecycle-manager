@@ -35,18 +35,25 @@ while read -r collaborator; do
   permission=$(get_permission "$role")
   body=$(jq -nc --arg permission "$permission" '{permission: $permission}')
 
+  # GitHub-shaped configurations say "team", GitLab-shaped ones say "group";
+  # Bitbucket has a single concept for both.
   if [[ "$type" == "user" ]]; then
     # Users are addressed by account_id or UUID (usernames were removed for
-    # GDPR). UUIDs arrive with literal braces and must be percent-encoded.
-    encoded=$(bb_encode_uuid "$id")
+    # GDPR), so a nickname is resolved through the workspace member list.
+    if ! encoded=$(bb_resolve_principal "$id"); then
+      FAILED=1
+      continue
+    fi
 
     echo "Granting '$permission' on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} to user '$id'"
 
     bb_api PUT "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/permissions-config/users/${encoded}" "$body"
-  elif [[ "$type" == "group" ]]; then
+  elif [[ "$type" == "group" || "$type" == "team" ]]; then
+    encoded=$(bb_urlencode "$id")
+
     echo "Granting '$permission' on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} to group '$id'"
 
-    bb_api PUT "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/permissions-config/groups/${id}" "$body"
+    bb_api PUT "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/permissions-config/groups/${encoded}" "$body"
   else
     echo "Error: unknown collaborator type '$type' for '$id'"
     FAILED=1
@@ -60,8 +67,16 @@ while read -r collaborator; do
     404)
       # ADR-3. repository:admin can only grant permissions to principals that
       # are ALREADY workspace members, and Bitbucket has no API to invite one.
-      # Collect these and report them together, by name, below.
-      MISSING_MEMBERS+=("$type '$id'")
+      # But a wrong repository slug returns 404 too, so check which it is before
+      # blaming workspace membership and sending an admin to the members page.
+      bb_api GET "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}"
+
+      if [[ "$BB_HTTP_CODE" == "200" ]]; then
+        MISSING_MEMBERS+=("$type '$id'")
+      else
+        echo "Error: got 404 granting '$permission' to '$id', and repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} is not reachable either (HTTP $BB_HTTP_CODE). This is a repository problem, not a workspace membership one."
+      fi
+
       FAILED=1
       ;;
     *)

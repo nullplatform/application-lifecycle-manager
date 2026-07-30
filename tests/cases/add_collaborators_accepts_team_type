@@ -1,0 +1,17 @@
+#!/bin/bash
+# GitHub-shaped configurations send type "team"; Bitbucket's equivalent is a
+# group. Treat them as the same thing instead of failing the whole workflow on an
+# "unknown collaborator type".
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_COLLABORATORS='[{"id":"platform team","role":"maintainer","type":"team"}]'
+
+fixture PUT "/repositories/acme/my-service/permissions-config/groups/platform%20team" 200 \
+  '{"permission":"write"}'
+
+run_step add_collaborators
+
+assert_status 0 || exit 1
+assert_called PUT "/repositories/acme/my-service/permissions-config/groups/platform%20team" || exit 1
