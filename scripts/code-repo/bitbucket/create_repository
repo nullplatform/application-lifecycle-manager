@@ -80,26 +80,22 @@ echo "Repository created: $BITBUCKET_REPOSITORY_URL"
 if [[ -z "${TEMPLATE_URL:-}" || "$TEMPLATE_URL" == "null" ]]; then
   echo "No TEMPLATE_URL set (the application has no template_id); leaving $BITBUCKET_REPOSITORY_URL empty."
 else
-  # For an Atlassian API token the git username MUST be the literal string
-  # 'x-bitbucket-api-token-auth' and the password is the token itself (the
-  # 'x-token-auth' form is for OAuth/access tokens and would fail auth here).
-  PUSH_URL="https://x-bitbucket-api-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}.git"
+  # Clean URLs, with no credential in them: bb_git_authed supplies the token
+  # through git's env-based config for every URL under BITBUCKET_INSTALLATION_URL,
+  # which keeps it out of argv (and out of anything git echoes on failure).
+  #
+  # That also covers a template hosted in our own Bitbucket, which is private and
+  # needs the token. A template on GitHub (the usual case) is public and gets no
+  # header, since the config is scoped to the Bitbucket host.
+  PUSH_URL="${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}.git"
 
   CLONE_URL="$TEMPLATE_URL"
-
-  # A template hosted in Bitbucket is private, so cloning it needs the same
-  # token. A template on GitHub (the usual case) is public and needs none.
-  if [[ "$TEMPLATE_URL" == "https://bitbucket.org/"* ]]; then
-    TEMPLATE_PATH="${TEMPLATE_URL#https://bitbucket.org/}"
-    TEMPLATE_PATH="${TEMPLATE_PATH%.git}"
-    CLONE_URL="https://x-bitbucket-api-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/${TEMPLATE_PATH}.git"
-  fi
 
   SEED_DIR=$(mktemp -d)
 
   echo "Seeding $BITBUCKET_REPOSITORY_URL from template $TEMPLATE_URL"
 
-  if ! bb_git clone --depth 1 "$CLONE_URL" "$SEED_DIR"; then
+  if ! bb_git_authed clone --depth 1 "$CLONE_URL" "$SEED_DIR"; then
     rm -rf "$SEED_DIR"
     bb_fail "Failed to clone the template $TEMPLATE_URL"
   fi
@@ -130,7 +126,7 @@ else
   # Push HEAD to an explicit ref, so the local branch name (which varies with
   # the git version's init.defaultBranch) does not matter. This is the first ref
   # in the repo, so Bitbucket makes it the default branch.
-  if ! bb_git -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"; then
+  if ! bb_git_authed -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"; then
     rm -rf "$SEED_DIR"
     bb_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL"
   fi

@@ -24,8 +24,19 @@ while [[ $# -gt 0 ]]; do
     -o) out="$2"; shift 2 ;;
     -w) want_code=1; shift 2 ;;
     -H|-u) shift 2 ;;
+    # Credentials travel in a 0600 config file, never on the command line.
+    --config|-K) shift 2 ;;
     -d) data="$2"; shift 2 ;;
-    --data) data="$2"; shift 2 ;;
+    --data)
+      # `--data @FILE` keeps secret request bodies off argv too. Read the file so
+      # request_body assertions still see the JSON that was actually sent.
+      if [[ "$2" == @* ]]; then
+        data=$(cat "${2#@}")
+      else
+        data="$2"
+      fi
+      shift 2
+      ;;
     -s|-S|-f) shift ;;
     *) url="$1"; shift ;;
   esac

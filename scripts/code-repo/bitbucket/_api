@@ -33,20 +33,35 @@ bb_api() {
   local path="$2"
   local body="${3:-}"
 
-  local tmp
+  local tmp cfg body_file
   tmp=$(mktemp)
+  cfg=$(mktemp)
+  body_file=""
+
+  chmod 600 "$cfg"
+
+  # The credential goes in a 0600 config file, NEVER on the command line: argv is
+  # world-readable through ps and /proc/<pid>/cmdline for as long as curl runs,
+  # and monitoring agents log full command lines. An unquoted curl config value is
+  # taken literally to end-of-line, so the token needs no escaping.
+  printf 'user = %s:%s\n' "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN" > "$cfg"
 
   local args=(
     -s
     -o "$tmp"
     -w '%{http_code}'
     -X "$method"
-    -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}"
+    --config "$cfg"
     -H "Content-Type: application/json"
   )
 
   if [[ -n "$body" ]]; then
-    args+=(--data "$body")
+    # create_secrets sends the nullplatform CI api key in the body, so the body
+    # has to stay off argv for the same reason.
+    body_file=$(mktemp)
+    chmod 600 "$body_file"
+    printf '%s' "$body" > "$body_file"
+    args+=(--data "@$body_file")
   fi
 
   # BB_HTTP_CODE and BB_BODY are the outputs of bb_api: they are read by the
@@ -56,7 +71,11 @@ bb_api() {
   # shellcheck disable=SC2034
   BB_BODY=$(cat "$tmp")
 
-  rm -f "$tmp"
+  rm -f "$tmp" "$cfg"
+
+  if [[ -n "$body_file" ]]; then
+    rm -f "$body_file"
+  fi
 }
 
 # bb_encode_uuid VALUE
@@ -114,6 +133,26 @@ bb_git() {
   fi
 
   return $status
+}
+
+# bb_git_authed ARGS...
+#
+# bb_git with the Bitbucket credential injected through git's env-based config
+# (GIT_CONFIG_COUNT, git >= 2.31) instead of URL userinfo. Same reason as bb_api's
+# config file: argv is world-readable, the environment is not. Callers therefore
+# pass a CLEAN https URL, with no `user:pass@` in it.
+#
+# For an Atlassian API token the git username MUST be the literal string
+# 'x-bitbucket-api-token-auth' ('x-token-auth' is for OAuth tokens and fails).
+bb_git_authed() {
+  local basic
+
+  basic=$(printf '%s:%s' 'x-bitbucket-api-token-auth' "$BITBUCKET_API_TOKEN" | base64 | tr -d '\n')
+
+  GIT_CONFIG_COUNT=1 \
+  GIT_CONFIG_KEY_0="http.${BITBUCKET_INSTALLATION_URL}/.extraHeader" \
+  GIT_CONFIG_VALUE_0="Authorization: Basic ${basic}" \
+    bb_git "$@"
 }
 
 # bb_fail MESSAGE...

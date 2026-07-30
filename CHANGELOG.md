@@ -21,6 +21,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
+- Bitbucket API and git calls no longer pass the API token, or a secret request body, as a
+  command-line argument, where any local process could read it from `ps` / `/proc`. curl reads the
+  credential from a `0600` config file and git receives it as a URL-matched `extraHeader` through the
+  environment.
 - The Bitbucket provider now refuses a template URL that is not `https://`, and restricts git to the
   https transport while seeding. A crafted template URL could otherwise reach a local `git clone` and
   run commands in the workflow container through git's `ext::` transport.

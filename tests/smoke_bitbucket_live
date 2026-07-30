@@ -37,6 +37,13 @@ export CODE_REPOSITORY_COLLABORATORS='[]'
 export CODE_REPOSITORY_SECRETS='{"NULLPLATFORM_API_KEY":"smoke-test-value"}'
 export APPLICATION_ID="0"
 
+# Same reason as bb_api: keep the token out of argv, where any local process can
+# read it from ps / /proc for as long as curl runs.
+SMOKE_CURL_CFG=$(mktemp)
+chmod 600 "$SMOKE_CURL_CFG"
+printf 'user = %s:%s\n' "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN" > "$SMOKE_CURL_CFG"
+trap 'rm -f "$SMOKE_CURL_CFG"' EXIT
+
 echo "=== smoke: ${BITBUCKET_WORKSPACE}/${SLUG} (bot user: ${BITBUCKET_EMAIL}) ==="
 
 # Each step is sourced, exactly as the workflow engine does it. A step that
@@ -67,7 +74,7 @@ fi
 echo "ok  Contract A: $BITBUCKET_REPOSITORY_URL"
 
 # The template must actually be in the repo, as ONE root commit.
-COMMITS=$(curl -s -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+COMMITS=$(curl -s --config "$SMOKE_CURL_CFG" \
   "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}/commits/main" \
   | jq '.values | length')
 
@@ -79,7 +86,7 @@ fi
 echo "ok  template seeded as a single root commit"
 
 # The credential must be stored secured (its value is then write-only).
-SECURED=$(curl -s -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+SECURED=$(curl -s --config "$SMOKE_CURL_CFG" \
   "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}/pipelines_config/variables?pagelen=100" \
   | jq -r '.values[] | select(.key == "NULLPLATFORM_API_KEY") | .secured')
 
@@ -100,7 +107,7 @@ echo ""
 echo "--- cleanup ---"
 
 CLEANUP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
-  -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+  --config "$SMOKE_CURL_CFG" \
   "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${SLUG}")
 
 echo "deleted ${BITBUCKET_WORKSPACE}/${SLUG} (HTTP $CLEANUP_CODE)"
