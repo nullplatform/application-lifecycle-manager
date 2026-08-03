@@ -276,7 +276,11 @@ bb_git() {
   output=$(GIT_TERMINAL_PROMPT=0 GIT_ALLOW_PROTOCOL=https git "$@" 2>&1)
   status=$?
 
-  if [[ -n "$output" ]]; then
+  # Only on FAILURE. git's chatter -- clone progress, the init default-branch
+  # hints, the file list of a commit -- is noise in the activity log, where the
+  # reader wants to know which step is running and what broke. On failure it is the
+  # whole diagnosis, so it goes out in full (scrubbed).
+  if [[ "$status" -ne 0 && -n "$output" ]]; then
     printf '%s\n' "$output" | bb_scrub
   fi
 

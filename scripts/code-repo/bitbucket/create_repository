@@ -37,8 +37,7 @@ CREATE_REPO_BODY=$(jq -nc \
   --arg project_key "$BITBUCKET_PROJECT_KEY" \
   '{scm: "git", is_private: true, fork_policy: "no_forks", project: {key: $project_key}}')
 
-echo "Creating repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} with body: "
-echo "$CREATE_REPO_BODY" | jq .
+echo "Creating private repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} in project ${BITBUCKET_PROJECT_KEY}"
 
 bb_api POST "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}" "$CREATE_REPO_BODY"
 
