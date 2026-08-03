@@ -314,6 +314,39 @@ bb_git_authed() {
     bb_git "$@"
 }
 
+# bb_reconcile_repository_url CANONICAL_URL
+#
+# Contract A. core-entities stores repository_url verbatim and resolves an
+# application by an EXACT string match -- no normalisation, no .git stripping, no
+# lower-casing. If the URL the application was created with is not byte-identical
+# to the one Bitbucket reports, a later `np build start` fails with "could not get
+# the app". Fix it while we still know both values.
+#
+# Lives here, not in create_repository, because BOTH strategies need it and only
+# one of them creates anything: on `import` the repository already exists, and the
+# slug we resolved it by was lower-cased and slugified from the application's own
+# repository_url (see build_context) -- so importing .../My-Service finds the repo
+# at .../my-service and the stored URL is left stale in exactly the same way.
+bb_reconcile_repository_url() {
+  local canonical="$1"
+
+  if [[ "$REPOSITORY_URL" == "$canonical" ]]; then
+    return 0
+  fi
+
+  echo "Application repository_url ('$REPOSITORY_URL') differs from the canonical Bitbucket URL ('$canonical'). Updating application $APPLICATION_ID."
+
+  local body
+  body=$(jq -nc --arg url "$canonical" '{repository_url: $url}')
+
+  if ! np application update --id "$APPLICATION_ID" --body "$body" --format json >/dev/null; then
+    bb_fail "Failed to update application $APPLICATION_ID with the canonical repository_url $canonical. Builds would fail to resolve the application."
+  fi
+
+  REPOSITORY_URL="$canonical"
+  export REPOSITORY_URL
+}
+
 # bb_fail MESSAGE...
 bb_fail() {
   # stdout, NOT stderr. entrypoint captures the workflow's stdout

@@ -174,28 +174,11 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Contract A reconciliation.
-#
-# core-entities stores repository_url verbatim and resolves an application by an
-# EXACT string match -- no normalisation, no .git stripping, no lower-casing. If
-# the URL the application was created with is not byte-identical to the one
-# Bitbucket just gave us (Bitbucket slugifies and lower-cases), then a later
-# `np build start` fails with "could not get the app". Fix it now, while we
-# still know both values.
+# 3. Contract A reconciliation (bb_reconcile_repository_url, in _api -- the
+# import path in validate_repository_does_not_exist needs the same thing).
 # ---------------------------------------------------------------------------
 
-if [[ "$REPOSITORY_URL" != "$BITBUCKET_REPOSITORY_URL" ]]; then
-  echo "Application repository_url ('$REPOSITORY_URL') differs from the canonical Bitbucket URL ('$BITBUCKET_REPOSITORY_URL'). Updating application $APPLICATION_ID."
-
-  UPDATE_BODY=$(jq -nc --arg url "$BITBUCKET_REPOSITORY_URL" '{repository_url: $url}')
-
-  if ! np application update --id "$APPLICATION_ID" --body "$UPDATE_BODY" --format json >/dev/null; then
-    bb_fail "Failed to update application $APPLICATION_ID with the canonical repository_url $BITBUCKET_REPOSITORY_URL. Builds would fail to resolve the application."
-  fi
-
-  REPOSITORY_URL="$BITBUCKET_REPOSITORY_URL"
-  export REPOSITORY_URL
-fi
+bb_reconcile_repository_url "$BITBUCKET_REPOSITORY_URL"
 
 export BITBUCKET_REPOSITORY_URL
 export BITBUCKET_MAIN_BRANCH

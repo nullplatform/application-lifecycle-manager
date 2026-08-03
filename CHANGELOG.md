@@ -22,6 +22,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
+- Importing an existing Bitbucket repository now reconciles the application's `repository_url` with
+  the canonical URL Bitbucket reports, as creating one already did. Because the repository is looked
+  up by a slug derived from that URL, importing `.../My-Service` resolved `.../my-service` and left
+  the application unresolvable, so later builds failed with "could not get the app".
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
   no longer risk picking a configuration that belongs to a different provider.

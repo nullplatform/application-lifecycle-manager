@@ -44,6 +44,13 @@ if [[ "$REPOSITORY_EXISTS" == "true" ]]; then
   export BITBUCKET_MAIN_BRANCH
 
   echo "Repository found ($BITBUCKET_REPOSITORY_URL, default branch '$BITBUCKET_MAIN_BRANCH') and strategy is set to 'import'. Proceeding with import configuration..."
+
+  # Contract A, same as the create path. create_repository returns early on
+  # import, so this is the only place the imported repository's canonical URL is
+  # ever compared with the one the application was created with -- and REPOSITORY_SLUG
+  # was slugified from that URL, so importing .../My-Service resolves .../my-service
+  # and leaves core-entities unable to match the application.
+  bb_reconcile_repository_url "$BITBUCKET_REPOSITORY_URL"
 elif [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
   bb_fail "Repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} does not exist but strategy is set to 'import'. Please create the repository first or change strategy to 'create'."
 else
