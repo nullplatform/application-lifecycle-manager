@@ -70,7 +70,13 @@ fi
 # ---------------------------------------------------------------------------
 
 if [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
-  bb_api_values GET "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/?sort=-created_on&pagelen=20"
+  # bb_api, NOT bb_api_values: we want the ONE most recent page, and
+  # bb_api_values follows `next` until the collection is exhausted. On a repo with
+  # a long CI history that would be ceil(N/20) sequential round-trips to find the
+  # handful of runs that are still in flight. Anything still PENDING or
+  # IN_PROGRESS is by definition among the newest, so one page of 20 sorted by
+  # -created_on covers it.
+  bb_api GET "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/?sort=-created_on&pagelen=20"
 
   if [[ "$BB_HTTP_CODE" == "200" ]]; then
     while read -r uuid; do
@@ -90,8 +96,8 @@ if [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
           echo "Warning: could not stop pipeline $uuid (HTTP $BB_HTTP_CODE): $BB_BODY"
           ;;
       esac
-    done < <(echo "$BB_VALUES" | jq -r --arg branch "$BRANCH" \
-      '.[]? | select(.target.ref_name == $branch)
+    done < <(echo "$BB_BODY" | jq -r --arg branch "$BRANCH" \
+      '.values[]? | select(.target.ref_name == $branch)
             | select(.state.name == "IN_PROGRESS" or .state.name == "PENDING")
             | .uuid')
   else

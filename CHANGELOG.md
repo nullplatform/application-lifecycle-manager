@@ -26,6 +26,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   the canonical URL Bitbucket reports, as creating one already did. Because the repository is looked
   up by a slug derived from that URL, importing `.../My-Service` resolved `.../my-service` and left
   the application unresolvable, so later builds failed with "could not get the app".
+- Stopping in-flight Bitbucket pipelines before the first build now reads only the most recent page
+  of pipelines instead of walking the repository's entire CI history, which cost one request per 20
+  past runs and was silently skipped altogether if any page in the walk failed.
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
   no longer risk picking a configuration that belongs to a different provider.
