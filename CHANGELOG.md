@@ -9,16 +9,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
+- Bitbucket code repository provider (GitHub App auth via the `gh` CLI).
 - Code and asset repository creation can each be skipped from the platform, through the
   `global.workflowSkipConfig` NRN key (`createCodeRepository` / `createImageRepository`, where `true`
   means skip). The `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment variables still
   work and now override the platform in both directions. Both default to enabled, so existing
   behavior is unchanged.
-- Bitbucket Cloud code repository support (`scripts/code-repo/bitbucket`), authenticated with a
-  dedicated bot user's Atlassian API token over HTTP Basic (the only credential that can enable
-  Bitbucket Pipelines).
-- Importing a Bitbucket repository now stops any pipeline already running on the default branch
-  before triggering the first build, matching the GitHub provider's cancel-then-run behavior.
 
 ### Changed
 - The `ci` API key is now stored in the created repository as `NULLPLATFORM_API_KEY`, the name the
@@ -26,37 +22,6 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
-- The template push is now retried with backoff. Bitbucket answers the repository-create call before
-  the repository is usable over git, so the first push intermittently came back unauthenticated and
-  failed the workflow with `fatal: could not read Username`, leaving an empty repository behind.
-- Bitbucket steps no longer log git's own chatter on success (clone progress, `init` hints, the file
-  list of the seed commit, the create-request body). On failure the full output is still reported.
-- `build_context` reports the resolved Bitbucket context in a single line instead of one line per
-  value, naming any field that was overridden from the environment.
-- Bitbucket step failures are now reported on stdout, so they reach the nullplatform activity log.
-  `entrypoint` captures only the workflow's stdout, so every error the provider raised on stderr was
-  lost and the operator saw just "error: exit status 1".
-- Bitbucket configuration values are trimmed, so a workspace or project key pasted with a stray space
-  no longer produces a malformed URL and an unrelated HTTP error.
-- Bitbucket collaborators given as workspace nicknames are now resolved to Atlassian account ids,
-  `type: "team"` is accepted as a group, group ids are URL-encoded, and a `404` no longer blames
-  workspace membership when the repository itself is unreachable. An email address is now refused
-  with an explicit message, since Bitbucket cannot resolve one.
-- Throttled (`429`) and transient `5xx` Bitbucket responses are now retried with backoff, instead of
-  aborting provisioning after the repository was already created.
-- Bitbucket pipeline variables are now listed across every page, so an existing secret is found and
-  updated even when the repository holds more than 100 variables.
-- A Bitbucket secret value containing a tab is no longer stored with a literal `\t` in place of it.
-- Bitbucket API and git calls no longer pass the API token, or a secret request body, as a
-  command-line argument, where any local process could read it from `ps` / `/proc`. curl reads the
-  credential from a `0600` config file and git receives it as a URL-matched `extraHeader` through the
-  environment.
-- The Bitbucket provider now refuses a template URL that is not `https://`, and restricts git to the
-  https transport while seeding. A crafted template URL could otherwise reach a local `git clone` and
-  run commands in the workflow container through git's `ext::` transport.
-- `bitbucket` is now recognized by the code repository provider lookup. Selecting it previously
-  failed with "unknown code repository provider" unless `CODE_REPOSITORY_SPECIFICATION_ID` was set
-  by hand.
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
   no longer risk picking a configuration that belongs to a different provider.
