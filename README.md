@@ -173,17 +173,47 @@ The asset repository workflow is composed of the following tasks:
 
 ## Toggling repository creation
 
-The two responsibilities are independent, so you can disable either one with an environment
-variable set on the agent. This is useful when only one side is managed here — for example,
-creating code repositories while asset repositories are provisioned elsewhere.
+The two responsibilities are independent, so either one can be disabled. There are two ways to
+do it, and they compose: the platform decides by default, and the agent's environment can
+override it.
 
-| Variable                  | Default | Effect                                            |
-|---------------------------|---------|---------------------------------------------------|
-| `CREATE_CODE_REPOSITORY`  | enabled | Set to `false` to skip code repository creation.  |
-| `CREATE_ASSET_REPOSITORY` | enabled | Set to `false` to skip asset repository creation. |
+### From the platform
 
-Only the exact lowercase value `false` disables a step. Any other value, including unset,
-empty, and `FALSE`, keeps the default behavior of creating the repository.
+Each step reads the `global.workflowSkipConfig` NRN key for the application being created:
+
+```bash
+np nrn read --nrn "$applicationNrn" --ids global.workflowSkipConfig --format json
+```
+
+The value is a JSON object where **`true` means skip**:
+
+```json
+{ "createCodeRepository": true, "createRepositoryTag": true, "createImageRepository": true }
+```
+
+| Key | Step |
+|---|---|
+| `createCodeRepository` | code repository creation |
+| `createImageRepository` | asset repository creation (the platform calls it the image repository) |
+
+`createRepositoryTag` belongs to another service and is ignored here. A key that is absent, or
+set to anything other than `true`, means the step runs. The key is read once per workflow run.
+If it cannot be read at all, nothing is skipped and the step logs a warning — the same
+behavior as before this config existed.
+
+### From the agent's environment
+
+An environment variable set on the agent **overrides the platform** for that step, in both
+directions:
+
+| Variable                  | Effect                                                                   |
+|---------------------------|--------------------------------------------------------------------------|
+| `CREATE_CODE_REPOSITORY`  | `false` skips; any other value runs the step even if the platform says skip. |
+| `CREATE_ASSET_REPOSITORY` | `false` skips; any other value runs the step even if the platform says skip. |
+
+Mind that the two are inverted: `CREATE_CODE_REPOSITORY=false` skips, while
+`createCodeRepository: true` skips. Only the exact lowercase value `false` disables a step,
+so `FALSE` reads as "run it".
 
 Skipping a step is not an error: the hook still reports success, and the step that remains
 enabled runs normally. Setting both to `false` leaves the application created with no

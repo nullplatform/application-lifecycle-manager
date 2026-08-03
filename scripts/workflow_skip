@@ -1,0 +1,88 @@
+#!/bin/bash
+#
+# Reads the platform's `global.workflowSkipConfig` NRN key and answers whether a
+# given step must be skipped. Sourced by the create_*_repository dispatchers.
+#
+# The key holds a JSON object as a STRING, keyed in camelCase, where `true` means
+# SKIP:
+#
+#   { "createCodeRepository": true, "createRepositoryTag": true,
+#     "createImageRepository": true }
+#
+# As with every script here, this file is SOURCED into the workflow's shared
+# shell: no `set -e`, and messages go to stdout, which is the only stream
+# entrypoint forwards to nullplatform.
+
+WORKFLOW_SKIP_CONFIG_KEY="global.workflowSkipConfig"
+
+if ! type -t workflow_skip_config_load >/dev/null 2>&1; then
+  # Reads the key once per workflow run and caches it in WORKFLOW_SKIP_CONFIG.
+  # Never fatal: if the key cannot be read, nothing is skipped, which is the same
+  # behaviour as before this config existed.
+  workflow_skip_config_load() {
+    if [[ -n "${WORKFLOW_SKIP_CONFIG:-}" ]]; then
+      return 0
+    fi
+
+    WORKFLOW_SKIP_CONFIG='{}'
+
+    local response
+    if ! response=$(np nrn read --nrn "$NRN" --ids "$WORKFLOW_SKIP_CONFIG_KEY" --format json 2>&1); then
+      echo "Warning: could not read $WORKFLOW_SKIP_CONFIG_KEY for $NRN, so nothing will be skipped. Response: $response"
+      return 0
+    fi
+
+    # The value is a string holding JSON, not an object, so it needs a second
+    # parse. (`jq -r` also prints an object verbatim, so both shapes work here.)
+    local raw
+    raw=$(printf '%s' "$response" | jq -r '.namespaces.global.workflowSkipConfig // empty' 2>/dev/null)
+
+    if [[ -z "$raw" ]]; then
+      return 0
+    fi
+
+    if ! WORKFLOW_SKIP_CONFIG=$(printf '%s' "$raw" | jq -c '.' 2>/dev/null); then
+      echo "Warning: $WORKFLOW_SKIP_CONFIG_KEY is not valid JSON, ignoring it: $raw"
+      WORKFLOW_SKIP_CONFIG='{}'
+    fi
+  }
+fi
+
+if ! type -t workflow_skip_step >/dev/null 2>&1; then
+  # workflow_skip_step CREATE_ENV_VAR SKIP_KEY
+  #
+  # Returns 0 when the step must be SKIPPED, 1 when it must run.
+  #
+  # The environment variable wins whenever it is set: it is the operator's manual
+  # override of whatever the platform says. Mind that the two are inverted --
+  # CREATE_CODE_REPOSITORY=false means skip, while workflowSkipConfig's
+  # createCodeRepository=true means skip.
+  workflow_skip_step() {
+    local env_var="$1"
+    local key="$2"
+
+    local env_value="${!env_var:-}"
+
+    if [[ -n "$env_value" ]]; then
+      if [[ "$env_value" == "false" ]]; then
+        echo "$env_var=false — skipping"
+        return 0
+      fi
+
+      echo "$env_var=$env_value — running this step regardless of $WORKFLOW_SKIP_CONFIG_KEY"
+      return 1
+    fi
+
+    workflow_skip_config_load
+
+    local skip
+    skip=$(printf '%s' "$WORKFLOW_SKIP_CONFIG" | jq -r --arg key "$key" '.[$key] // false')
+
+    if [[ "$skip" == "true" ]]; then
+      echo "$WORKFLOW_SKIP_CONFIG_KEY.$key=true — skipping"
+      return 0
+    fi
+
+    return 1
+  }
+fi

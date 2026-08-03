@@ -1,14 +1,17 @@
 #!/bin/bash
 
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/workflow_skip
+source "$CURRENT_DIR/../workflow_skip"
+
 # Workflow steps are sourced into one shared shell, so this must `return` and not `exit`:
 # an `exit` here would end that shell and silently skip every later step, including asset
 # repository creation.
-if [[ "${CREATE_CODE_REPOSITORY:-true}" == "false" ]]; then
-  echo "CREATE_CODE_REPOSITORY=false — skipping code repository creation"
+if workflow_skip_step CREATE_CODE_REPOSITORY createCodeRepository; then
+  echo "Skipping code repository creation"
   return 0
 fi
-
-CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
 
 REPOSITORY_URL=$(echo "$APPLICATION" | jq -r .repository_url)
 TEMPLATE_ID=$(echo "$APPLICATION" | jq -r '.template_id // empty' )

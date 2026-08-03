@@ -9,8 +9,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
-- `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment flags to skip code or asset
-  repository creation independently. Both default to enabled, so existing behavior is unchanged.
+- Code and asset repository creation can each be skipped from the platform, through the
+  `global.workflowSkipConfig` NRN key (`createCodeRepository` / `createImageRepository`, where `true`
+  means skip). The `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment variables still
+  work and now override the platform in both directions. Both default to enabled, so existing
+  behavior is unchanged.
 - Bitbucket Cloud code repository support (`scripts/code-repo/bitbucket`), authenticated with a
   dedicated bot user's Atlassian API token over HTTP Basic (the only credential that can enable
   Bitbucket Pipelines).

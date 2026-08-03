@@ -28,7 +28,10 @@ jobs:
         run: |
           shellcheck --shell=bash -e SC1091 -e SC2154 \
             $(find scripts/code-repo/bitbucket -maxdepth 1 -type f) \
+            scripts/code-repo/create_code_repository \
             scripts/code-repo/generate_secrets \
+            scripts/asset-repo/create_asset_repository \
+            scripts/workflow_skip \
             tests/run \
             tests/lib.sh \
             tests/stubs/*
