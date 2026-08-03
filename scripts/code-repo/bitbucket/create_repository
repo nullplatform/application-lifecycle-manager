@@ -138,8 +138,35 @@ else
   # Push HEAD to an explicit ref, so the local branch name (which varies with
   # the git version's init.defaultBranch) does not matter. This is the first ref
   # in the repo, so Bitbucket makes it the default branch.
-  seed_or_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL" \
-    -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"
+  #
+  # RETRIED, unlike the steps above. Bitbucket answers the create call before the
+  # new repository is usable over git, so this first push intermittently comes back
+  # UNAUTHENTICATED: git then asks for a username, and GIT_TERMINAL_PROMPT=0 turns
+  # that into "fatal: could not read Username". Observed against a real workspace on
+  # 2026-08-03, minutes after the same token had pushed successfully -- so it is the
+  # repository that is not ready, not the credential. It clears on its own in
+  # seconds.
+  push_attempt=1
+  push_delay="${BB_PUSH_RETRY_DELAY:-3}"
+  push_max="${BB_PUSH_MAX_ATTEMPTS:-4}"
+
+  while true; do
+    if bb_git_authed -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"; then
+      break
+    fi
+
+    if [[ "$push_attempt" -ge "$push_max" ]]; then
+      rm -rf "$SEED_DIR"
+      bb_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL after $push_max attempts. If every attempt reported 'could not read Username', the credential was rejected: check that the bot user's API token carries write:repository:bitbucket, since admin does NOT imply write in Atlassian's granular scopes. $SEED_FAILURE_HINT"
+    fi
+
+    echo "Push failed (attempt ${push_attempt}/${push_max}). A just-created repository is not always ready for git yet, retrying in ${push_delay}s"
+
+    sleep "$push_delay"
+
+    push_delay=$((push_delay * 2))
+    push_attempt=$((push_attempt + 1))
+  done
 
   rm -rf "$SEED_DIR"
 
