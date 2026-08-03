@@ -9,7 +9,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
-- Bitbucket code repository provider (GitHub App auth via the `gh` CLI).
+- Bitbucket Cloud code repository provider, authenticated with a dedicated bot user's Atlassian API
+  token over HTTP Basic (the only credential that can enable Bitbucket Pipelines).
 - Code and asset repository creation can each be skipped from the platform, through the
   `global.workflowSkipConfig` NRN key (`createCodeRepository` / `createImageRepository`, where `true`
   means skip). The `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment variables still

@@ -22,9 +22,9 @@ jobs:
         #         REPOSITORY_NAME, APPLICATION_ID, ... from the environment, so
         #         they are legitimately "referenced but not assigned" here.
         #
-        # The bitbucket step scripts are matched with -maxdepth 1 -type f, so a
-        # subdirectory (install/, which holds the provider specification and its
-        # tofu module) is not handed to shellcheck as if it were a script.
+        # -maxdepth 1 -type f: only the step scripts themselves, so a future
+        # subdirectory of fixtures or data is never handed to shellcheck as if it
+        # were a script.
         run: |
           shellcheck --shell=bash -e SC1091 -e SC2154 \
             $(find scripts/code-repo/bitbucket -maxdepth 1 -type f) \
