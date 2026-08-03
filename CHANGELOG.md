@@ -28,6 +28,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   failed the workflow with `fatal: could not read Username`, leaving an empty repository behind.
 - Bitbucket steps no longer log git's own chatter on success (clone progress, `init` hints, the file
   list of the seed commit, the create-request body). On failure the full output is still reported.
+- `build_context` reports the resolved Bitbucket context in a single line instead of one line per
+  value, naming any field that was overridden from the environment.
 - Bitbucket step failures are now reported on stdout, so they reach the nullplatform activity log.
   `entrypoint` captures only the workflow's stdout, so every error the provider raised on stderr was
   lost and the operator saw just "error: exit status 1".

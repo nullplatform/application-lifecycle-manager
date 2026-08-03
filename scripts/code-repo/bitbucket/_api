@@ -163,11 +163,18 @@ bb_resolve_or_fail() {
 
   local value="${!var:-}"
 
+  # Silent: build_context prints ONE summary line for the whole context instead of
+  # a line per value. What is worth surfacing is not "where did each field come
+  # from" but "which fields were overridden from the environment", which is the
+  # surprising case -- so record those and let the caller report them.
+  # BB_TRACK_OVERRIDE=no at the call site for values that are env-sourced BY DESIGN
+  # (the credential), which are not "overrides" worth reporting.
   if [[ -n "$value" ]]; then
-    echo "Using $var from environment: $value"
+    if [[ "${BB_TRACK_OVERRIDE:-yes}" == "yes" ]]; then
+      BB_ENV_OVERRIDES="${BB_ENV_OVERRIDES:+$BB_ENV_OVERRIDES }$var"
+    fi
   else
     value=$(echo "$CODE_REPOSITORY" | jq -r "${jq_path} // empty")
-    echo "No $var in environment, using value from platform: $value"
   fi
 
   # Trim surrounding whitespace. A value pasted into the provider form with a

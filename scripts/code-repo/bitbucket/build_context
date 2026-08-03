@@ -5,6 +5,11 @@ CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
 # shellcheck source=scripts/code-repo/bitbucket/_api
 source "$CURRENT_DIR/_api"
 
+# Collected by bb_resolve_or_fail and by the installation-url block below, reported
+# in the summary line at the end. Reset here because this file is SOURCED: a second
+# pass must not accumulate the first one's entries.
+BB_ENV_OVERRIDES=""
+
 # --- workspace -------------------------------------------------------------
 
 bb_resolve_or_fail BITBUCKET_WORKSPACE '.attributes.setup.workspace' \
@@ -13,19 +18,19 @@ bb_resolve_or_fail BITBUCKET_WORKSPACE '.attributes.setup.workspace' \
 # --- installation URL and API base -----------------------------------------
 
 if [[ -n "${BITBUCKET_INSTALLATION_URL:-}" ]]; then
-  echo "Using BITBUCKET_INSTALLATION_URL from environment: $BITBUCKET_INSTALLATION_URL"
+  BB_ENV_OVERRIDES="${BB_ENV_OVERRIDES:+$BB_ENV_OVERRIDES }BITBUCKET_INSTALLATION_URL"
 else
   # $CODE_REPOSITORY is `np provider list` output, whose attributes use the
   # SCHEMA (snake_case) shape -- exactly like the GitLab provider reads
   # .attributes.setup.installation_url. (The camelCase forms bitbucket.* are the
   # NRN key names only.)
   BITBUCKET_INSTALLATION_URL=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_url // empty')
-  echo "No BITBUCKET_INSTALLATION_URL in environment, using value from platform: $BITBUCKET_INSTALLATION_URL"
 fi
 
+# Silent, like the values above: the resolved URL is in the summary line at the end
+# of this step, which is the only place it matters.
 if [[ -z "$BITBUCKET_INSTALLATION_URL" ]]; then
   BITBUCKET_INSTALLATION_URL="https://bitbucket.org"
-  echo "No installation_url configured, defaulting to: $BITBUCKET_INSTALLATION_URL"
 fi
 
 # Strip any trailing slash so the URLs we build never double up.
@@ -71,19 +76,16 @@ BITBUCKET_API_BASE="${BITBUCKET_API_BASE%/}"
 # documented source. The configuration fields (workspace, project_key,
 # installation_url) DO come back from the provider read as normal.
 
-bb_resolve_or_fail BITBUCKET_EMAIL '.attributes.setup.email' \
+BB_TRACK_OVERRIDE=no bb_resolve_or_fail BITBUCKET_EMAIL '.attributes.setup.email' \
   "BITBUCKET_EMAIL is not set. It is the HTTP Basic username that pairs with BITBUCKET_API_TOKEN, so it lives next to the token in the environment of the ALM deployment, NOT on the bitbucket-configuration provider (which carries configuration only, no credentials). Set it to the bot user's Atlassian account email."
 
 if [[ -n "${BITBUCKET_API_TOKEN:-}" ]]; then
-  echo "Using BITBUCKET_API_TOKEN from environment (hidden)"
+  : # From the environment, as documented. Never echoed, not even redacted.
 else
   # This is null in production (secret attributes are nullified on provider
   # reads); kept for forward-compatibility and so the failure below is the
   # single decision point.
   BITBUCKET_API_TOKEN=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.api_token // empty')
-  if [[ -n "$BITBUCKET_API_TOKEN" ]]; then
-    echo "Using BITBUCKET_API_TOKEN from the provider record (hidden)"
-  fi
 fi
 
 if [[ -z "$BITBUCKET_API_TOKEN" ]]; then
@@ -122,14 +124,14 @@ if [[ -z "$REPOSITORY_SLUG" ]]; then
   bb_fail "Could not derive a repository slug from REPOSITORY_NAME='$REPOSITORY_NAME'"
 fi
 
+SLUG_NOTE=""
 if [[ "$REPOSITORY_SLUG" != "$REPOSITORY_NAME" ]]; then
-  echo "Normalised repository name '$REPOSITORY_NAME' to Bitbucket slug '$REPOSITORY_SLUG'"
+  SLUG_NOTE=" (slugified from '$REPOSITORY_NAME')"
 fi
 
-echo "Bitbucket workspace:  $BITBUCKET_WORKSPACE"
-echo "Bitbucket project:    $BITBUCKET_PROJECT_KEY"
-echo "Bitbucket repository: $REPOSITORY_SLUG"
-echo "Bitbucket bot user:   $BITBUCKET_EMAIL"
+# One line for the whole resolved context. The per-value logging this replaced was
+# 10 lines of a 15-line successful run.
+echo "Bitbucket ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}${SLUG_NOTE} | project ${BITBUCKET_PROJECT_KEY} | bot ${BITBUCKET_EMAIL} | ${BITBUCKET_INSTALLATION_URL}${BB_ENV_OVERRIDES:+ | overridden from env: $BB_ENV_OVERRIDES}"
 
 export BITBUCKET_EMAIL
 export BITBUCKET_API_TOKEN
