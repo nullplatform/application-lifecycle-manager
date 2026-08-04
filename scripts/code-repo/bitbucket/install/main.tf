@@ -12,11 +12,7 @@
 # BITBUCKET_API_TOKEN on the ALM deployment instead. See terraform.tfvars.example.
 
 module "code_repository" {
-  # TODO: move to the released tag (v6.8.1 or later) once
-  # nullplatform/tofu-modules#463 is merged. Until then this points at that PR's
-  # branch, because the version currently tagged sends a `type` that no longer
-  # resolves to a specification, plus credential fields the API strips.
-  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/code_repository?ref=fix/code-repository-bitbucket-schema"
+  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/code_repository?ref=v6.8.1"
 
   git_provider = "bitbucket"
   nrn          = var.nrn
