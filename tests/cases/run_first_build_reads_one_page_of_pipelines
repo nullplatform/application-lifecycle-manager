@@ -1,0 +1,38 @@
+#!/bin/bash
+# Stopping in-flight pipelines needs the MOST RECENT page, not the whole history.
+# Walking `next` (as bb_api_values does) would be ceil(N/20) sequential requests
+# on an imported repository with a long CI history, just to find runs that are by
+# definition among the newest.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="import"
+export BITBUCKET_MAIN_BRANCH="main"
+
+PIPELINES="/repositories/acme/my-service/pipelines/"
+PAGE1="${PIPELINES}?sort=-created_on&pagelen=20"
+
+fixture GET "/repositories/acme/my-service/pipelines_config" 200 '{"enabled":true}'
+
+# A `next` link the step must NOT follow.
+fixture GET "$PAGE1" 200 \
+  "{\"values\":[{\"uuid\":\"{p1}\",\"state\":{\"name\":\"IN_PROGRESS\"},\"target\":{\"ref_name\":\"main\"}}],
+    \"next\":\"https://api.bitbucket.org/2.0${PIPELINES}?sort=-created_on&pagelen=20&page=2\"}"
+
+fixture POST "${PIPELINES}%7Bp1%7D/stopPipeline" 204 ''
+fixture POST "$PIPELINES" 201 '{"build_number":7}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+
+# The in-flight run on page 1 is still stopped, and the build still triggered.
+assert_called POST "${PIPELINES}%7Bp1%7D/stopPipeline" || exit 1
+assert_called POST "$PIPELINES" || exit 1
+
+if grep -q 'page=2' "$BB_CALLS"; then
+  echo "  FAIL: followed the 'next' link and paginated the whole pipeline history. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

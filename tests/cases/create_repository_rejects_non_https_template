@@ -1,0 +1,29 @@
+#!/bin/bash
+# TEMPLATE_URL comes from `np template read` and reaches a LOCAL `git clone`.
+# git speaks ext:: and file://, so an unvalidated URL is command execution inside
+# the workflow container. Refuse it -- and refuse it BEFORE creating the
+# repository, so a bad template never leaves an orphan repo behind.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export REPOSITORY_URL="https://bitbucket.org/acme/my-service"
+export TEMPLATE_URL='ext::sh -c id'
+
+run_step create_repository
+
+assert_status 1 || exit 1
+assert_contains "TEMPLATE_URL must be an https:// URL" || exit 1
+
+if grep -q '^git' "$BB_CALLS"; then
+  echo "  FAIL: git was invoked with a non-https template URL. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+if grep -q '^POST' "$BB_CALLS"; then
+  echo "  FAIL: the repository was created before the template URL was validated. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

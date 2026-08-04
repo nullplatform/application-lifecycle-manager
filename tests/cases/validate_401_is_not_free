@@ -1,0 +1,17 @@
+#!/bin/bash
+# The dangerous one. A 401/403 is NOT "the slug is free": treating it as such
+# would send us on to create a repository we cannot see, and the failure would
+# surface much later as something unrelated.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+
+fixture GET "/repositories/acme/my-service" 401 \
+  '{"type":"error","error":{"message":"Unauthorized"}}'
+
+run_step validate_repository_does_not_exist
+
+assert_status 1 || exit 1
+assert_contains "This is NOT 'repository does not exist'" || exit 1

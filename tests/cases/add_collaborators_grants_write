@@ -1,0 +1,25 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_COLLABORATORS='[
+  {"id":"557058:abc","role":"developer","type":"user"},
+  {"id":"platform-team","role":"maintainer","type":"group"}
+]'
+
+fixture PUT "/repositories/acme/my-service/permissions-config/users/557058:abc" 200 '{}'
+fixture PUT "/repositories/acme/my-service/permissions-config/groups/platform-team" 200 '{}'
+
+run_step add_collaborators
+assert_status 0 || exit 1
+
+# GitLab role names must map onto Bitbucket's read|write|admin enum.
+body=$(request_body PUT "/repositories/acme/my-service/permissions-config/users/557058:abc")
+
+if [[ "$(echo "$body" | jq -r '.permission')" != "write" ]]; then
+  echo "  FAIL: expected permission 'write' for a developer, got: $body"
+  exit 1
+fi
+
+assert_contains "Finished adding collaborators" || exit 1

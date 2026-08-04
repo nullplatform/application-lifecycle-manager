@@ -1,0 +1,83 @@
+#!/bin/bash
+# Fixture-driven `curl` stub used by tests/run.
+#
+# Resolves a canned response by METHOD + request path from $BB_FIXTURES, and
+# appends every request (method, path, body) to $BB_CALLS so tests can assert on
+# what was actually sent.
+#
+# Honours the exact flag shapes the scripts use:
+#   bb_api:      -s -o FILE -w '%{http_code}' -X METHOD -H ... [--data BODY] URL
+#   OAuth mint:  -s -u KEY:SECRET -X POST -d grant_type=client_credentials URL
+#
+# As with real curl, the status code is echoed to stdout ONLY when -w asks for
+# it; the OAuth mint pipes raw stdout into jq and must not see a code appended.
+
+method="GET"
+out=""
+data=""
+url=""
+want_code=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -X) method="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    -w) want_code=1; shift 2 ;;
+    -H|-u) shift 2 ;;
+    # Credentials travel in a 0600 config file, never on the command line.
+    --config|-K) shift 2 ;;
+    -d) data="$2"; shift 2 ;;
+    --data)
+      # `--data @FILE` keeps secret request bodies off argv too. Read the file so
+      # request_body assertions still see the JSON that was actually sent.
+      if [[ "$2" == @* ]]; then
+        data=$(cat "${2#@}")
+      else
+        data="$2"
+      fi
+      shift 2
+      ;;
+    -s|-S|-f) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+
+path="${url#https://api.bitbucket.org/2.0}"
+
+printf '%s\t%s\t%s\n' "$method" "$path" "$data" >> "$BB_CALLS"
+
+key="${method}_$(printf '%s' "$path" | sed -e 's|[^A-Za-z0-9]|_|g')"
+
+# Per-key call counter, so a test can queue a different response for the 2nd
+# call to the same endpoint (the 409 -> re-list -> PUT flow needs this).
+count_file="$BB_FIXTURES/.count_${key}"
+n=1
+if [[ -f "$count_file" ]]; then
+  n=$(( $(cat "$count_file") + 1 ))
+fi
+printf '%s' "$n" > "$count_file"
+
+code_file="$BB_FIXTURES/${key}.${n}.code"
+body_file="$BB_FIXTURES/${key}.${n}.body"
+
+if [[ ! -f "$code_file" ]]; then
+  code_file="$BB_FIXTURES/${key}.code"
+  body_file="$BB_FIXTURES/${key}.body"
+fi
+
+# 599 = "the script made a call the test never stubbed". Fail loudly.
+code="599"
+body=""
+
+[[ -f "$code_file" ]] && code=$(cat "$code_file")
+[[ -f "$body_file" ]] && body=$(cat "$body_file")
+
+if [[ -n "$out" ]]; then
+  printf '%s' "$body" > "$out"
+else
+  printf '%s' "$body"
+fi
+
+if [[ "$want_code" -eq 1 ]]; then
+  printf '%s' "$code"
+fi

@@ -1,0 +1,184 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/code-repo/bitbucket/_api
+source "$CURRENT_DIR/_api"
+
+if [[ "$CODE_REPOSITORY_STRATEGY" == "import" ]]; then
+  echo "Strategy is set to 'import'. Skipping repo creation."
+  return
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  bb_fail "git is required to seed a Bitbucket repository from a template (Bitbucket Cloud has no import API) but it was not found on PATH."
+fi
+
+# TEMPLATE_URL arrives from `np template read` and is handed to a LOCAL git clone
+# below, because Bitbucket Cloud has no import API. git's transports include
+# ext:: (which runs a command), file:// and ssh:// with option-injection, so an
+# unvalidated URL here is code execution inside this container. GitLab and GitHub
+# do not have this exposure: they hand the URL to the remote's own import API.
+#
+# Validate BEFORE creating anything. Failing after the create would leave an
+# empty orphan repository, and the retry would then hit "already exists".
+if [[ -n "${TEMPLATE_URL:-}" && "$TEMPLATE_URL" != "null" && "$TEMPLATE_URL" != https://* ]]; then
+  bb_fail "TEMPLATE_URL must be an https:// URL, got '$TEMPLATE_URL'. Templates are seeded with a local git clone, so every other transport (ext::, file://, ssh://, fd::) is refused."
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Create the (empty) repository.
+#
+# project.key is not optional in practice: omit it and Bitbucket does not error,
+# it silently files the repository under the workspace's OLDEST project.
+# ---------------------------------------------------------------------------
+
+CREATE_REPO_BODY=$(jq -nc \
+  --arg project_key "$BITBUCKET_PROJECT_KEY" \
+  '{scm: "git", is_private: true, fork_policy: "no_forks", project: {key: $project_key}}')
+
+echo "Creating private repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} in project ${BITBUCKET_PROJECT_KEY}"
+
+bb_api POST "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}" "$CREATE_REPO_BODY"
+
+# Bitbucket answers repository creation with 200, not the 201 you would expect.
+# 201 is accepted defensively in case that is ever corrected.
+if [[ "$BB_HTTP_CODE" != "200" && "$BB_HTTP_CODE" != "201" ]]; then
+  bb_fail "Error creating repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} (HTTP $BB_HTTP_CODE): $BB_BODY"
+fi
+
+# Contract A: the canonical repository_url is exactly what the API returned in
+# links.html.href -- https://bitbucket.org/{workspace}/{slug}, no .git, no
+# trailing slash. NEVER synthesise it, and NEVER read links.clone[]: that
+# array's https entry carries .git and may embed userinfo, and its order is not
+# contractual.
+BITBUCKET_REPOSITORY_URL=$(echo "$BB_BODY" | jq -r '.links.html.href // empty')
+
+if [[ -z "$BITBUCKET_REPOSITORY_URL" ]]; then
+  bb_fail "Bitbucket did not return links.html.href for the new repository: $BB_BODY"
+fi
+
+# We push the seed commit to 'main' below, which makes it the default branch.
+BITBUCKET_MAIN_BRANCH="main"
+
+echo "Repository created: $BITBUCKET_REPOSITORY_URL"
+
+# ---------------------------------------------------------------------------
+# 2. Seed from the template (ADR-1).
+#
+# Bitbucket Cloud has NO import-from-URL API, and forking is dead (cross-
+# workspace forks were removed on 2026-07-01; same-workspace forks carry an
+# undetachable parent link). A real git clone + push is the only full-fidelity
+# option -- and here in ALM we are already in bash with git and a working tree,
+# so it is also the natural one.
+#
+# We squash to a single root commit so the customer's repository does not
+# inherit nullplatform's template history: clone --depth 1, drop .git, re-init.
+# ---------------------------------------------------------------------------
+
+if [[ -z "${TEMPLATE_URL:-}" || "$TEMPLATE_URL" == "null" ]]; then
+  echo "No TEMPLATE_URL set (the application has no template_id); leaving $BITBUCKET_REPOSITORY_URL empty."
+else
+  # Clean URLs, with no credential in them: bb_git_authed supplies the token
+  # through git's env-based config for every URL under BITBUCKET_INSTALLATION_URL,
+  # which keeps it out of argv (and out of anything git echoes on failure).
+  #
+  # That also covers a template hosted in our own Bitbucket, which is private and
+  # needs the token. A template on GitHub (the usual case) is public and gets no
+  # header, since the config is scoped to the Bitbucket host.
+  PUSH_URL="${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}.git"
+
+  CLONE_URL="$TEMPLATE_URL"
+
+  # Every seed failure below happens AFTER the repository exists, so the operator
+  # is left with an empty repo and a retry that dies on "already exists but
+  # strategy is set to 'create'". We do not delete it -- a repository is not ours
+  # to destroy once created -- so say what to do about it instead.
+  SEED_FAILURE_HINT="The repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} was already created and is EMPTY. Either delete it at ${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/admin and retry, or push the template by hand and retry with the 'import' strategy."
+
+  SEED_DIR=$(mktemp -d)
+
+  # Every seed step has to clean the temporary tree up before failing the
+  # workflow, and every one of them carries the same hint, so wrap the pattern
+  # once. Guarded so that re-sourcing this file cannot redefine it mid-run.
+  if ! type -t seed_or_fail >/dev/null 2>&1; then
+    seed_or_fail() {
+      local message="$1"
+      shift
+
+      # bb_git_authed for every call: the credential is a URL-matched
+      # http.<url>.extraHeader, so the local operations (init, add, commit) never
+      # look at it, and one call shape is easier to keep right than two.
+      if ! bb_git_authed "$@"; then
+        rm -rf "$SEED_DIR"
+        bb_fail "$message. $SEED_FAILURE_HINT"
+      fi
+    }
+  fi
+
+  echo "Seeding $BITBUCKET_REPOSITORY_URL from template $TEMPLATE_URL"
+
+  seed_or_fail "Failed to clone the template $TEMPLATE_URL" \
+    clone --depth 1 "$CLONE_URL" "$SEED_DIR"
+
+  # Drop the template's history entirely.
+  rm -rf "${SEED_DIR:?}/.git"
+
+  seed_or_fail "Failed to initialise the seed repository" -C "$SEED_DIR" init
+
+  seed_or_fail "Failed to stage the template files" -C "$SEED_DIR" add -A
+
+  # The agent container has no git identity configured, so pass one inline
+  # rather than mutating global git config.
+  seed_or_fail "Failed to create the initial commit" -C "$SEED_DIR" \
+    -c user.email="ci@nullplatform.com" \
+    -c user.name="nullplatform" \
+    commit -m "Initial commit from template"
+
+  # Push HEAD to an explicit ref, so the local branch name (which varies with
+  # the git version's init.defaultBranch) does not matter. This is the first ref
+  # in the repo, so Bitbucket makes it the default branch.
+  #
+  # RETRIED, unlike the steps above. Bitbucket answers the create call before the
+  # new repository is usable over git, so this first push intermittently comes back
+  # UNAUTHENTICATED: git then asks for a username, and GIT_TERMINAL_PROMPT=0 turns
+  # that into "fatal: could not read Username". Observed against a real workspace on
+  # 2026-08-03, minutes after the same token had pushed successfully -- so it is the
+  # repository that is not ready, not the credential. It clears on its own in
+  # seconds.
+  push_attempt=1
+  push_delay="${BB_PUSH_RETRY_DELAY:-3}"
+  push_max="${BB_PUSH_MAX_ATTEMPTS:-4}"
+
+  while true; do
+    if bb_git_authed -C "$SEED_DIR" push "$PUSH_URL" "HEAD:refs/heads/${BITBUCKET_MAIN_BRANCH}"; then
+      break
+    fi
+
+    if [[ "$push_attempt" -ge "$push_max" ]]; then
+      rm -rf "$SEED_DIR"
+      bb_fail "Failed to push the template to $BITBUCKET_REPOSITORY_URL after $push_max attempts. If every attempt reported 'could not read Username', the credential was rejected: check that the bot user's API token carries write:repository:bitbucket, since admin does NOT imply write in Atlassian's granular scopes. $SEED_FAILURE_HINT"
+    fi
+
+    echo "Push failed (attempt ${push_attempt}/${push_max}). A just-created repository is not always ready for git yet, retrying in ${push_delay}s"
+
+    sleep "$push_delay"
+
+    push_delay=$((push_delay * 2))
+    push_attempt=$((push_attempt + 1))
+  done
+
+  rm -rf "$SEED_DIR"
+
+  echo "Template pushed to $BITBUCKET_REPOSITORY_URL ($BITBUCKET_MAIN_BRANCH)"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Contract A reconciliation (bb_reconcile_repository_url, in _api -- the
+# import path in validate_repository_does_not_exist needs the same thing).
+# ---------------------------------------------------------------------------
+
+bb_reconcile_repository_url "$BITBUCKET_REPOSITORY_URL"
+
+export BITBUCKET_REPOSITORY_URL
+export BITBUCKET_MAIN_BRANCH

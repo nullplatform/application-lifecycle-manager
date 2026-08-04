@@ -1,0 +1,42 @@
+#!/bin/bash
+# REPOSITORY_NAME comes from `basename "$REPOSITORY_URL"` and is neither
+# lower-cased nor .git-stripped. Bitbucket slugifies, so an un-normalised name
+# would create the repo at a path we did not ask for -- and links.html.href
+# would then disagree with the application's repository_url (Contract A).
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+clear_context
+
+export REPOSITORY_NAME="My-Service.git"
+export BITBUCKET_API_TOKEN="env-token-xyz"
+export CODE_REPOSITORY='{"attributes":{"setup":{
+  "workspace":"acme",
+  "project_key":"APP",
+  "email":"bot@nullplatform.com",
+  "api_token":null
+}}}'
+
+slug=$(capture_export build_context REPOSITORY_SLUG)
+
+if [[ "$slug" != "my-service" ]]; then
+  echo "  FAIL: expected slug 'my-service', got '$slug'"
+  exit 1
+fi
+
+# Lower-casing and .git-stripping are not the whole story: Bitbucket also folds
+# every character it does not allow into '-'. Predict that exactly, instead of
+# discovering the difference from links.html.href after the repo is created.
+clear_context
+
+export BITBUCKET_EMAIL="bot@nullplatform.com"
+export BITBUCKET_API_TOKEN="env-token-xyz"
+export REPOSITORY_NAME="My Service (v2).git"
+export CODE_REPOSITORY='{"attributes":{"setup":{"workspace":"acme","project_key":"APP"}}}'
+
+slug=$(capture_export build_context REPOSITORY_SLUG)
+
+if [[ "$slug" != "my-service-v2" ]]; then
+  echo "  FAIL: expected slug 'my-service-v2', got '$slug'"
+  exit 1
+fi

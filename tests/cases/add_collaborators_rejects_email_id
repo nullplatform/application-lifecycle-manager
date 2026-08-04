@@ -1,0 +1,14 @@
+#!/bin/bash
+# Bitbucket removed emails from its API for GDPR, so an email can never be
+# resolved to a principal. Say that, instead of reporting a misleading "not a
+# member of the workspace".
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_COLLABORATORS='[{"id":"jdoe@acme.com","role":"developer","type":"user"}]'
+
+run_step add_collaborators
+
+assert_status 1 || exit 1
+assert_contains "cannot be resolved from an email address" || exit 1

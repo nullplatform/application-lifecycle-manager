@@ -1,0 +1,28 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CONFIG="/repositories/acme/my-service/pipelines_config"
+
+# GET pipelines_config 404s when Pipelines has NEVER been enabled. That does NOT
+# mean the repository is missing -- it means "not enabled yet, go PUT it".
+fixture GET "$CONFIG" 404 '{"type":"error"}'
+fixture PUT "$CONFIG" 200 '{"enabled":true}'
+fixture POST "/repositories/acme/my-service/pipelines/" 201 '{"build_number":1}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+assert_called PUT "$CONFIG" || exit 1
+assert_called POST "/repositories/acme/my-service/pipelines/" || exit 1
+assert_contains "build #1" || exit 1
+
+# Enabling must come BEFORE triggering.
+enable_line=$(grep -nF "$(printf 'PUT\t%s\t' "$CONFIG")" "$BB_CALLS" | cut -d: -f1 | head -1)
+trigger_line=$(grep -nF "$(printf 'POST\t/repositories/acme/my-service/pipelines/\t')" "$BB_CALLS" | cut -d: -f1 | head -1)
+
+if [[ "$enable_line" -ge "$trigger_line" ]]; then
+  echo "  FAIL: Pipelines must be enabled before a build is triggered"
+  exit 1
+fi

@@ -1,0 +1,62 @@
+#!/bin/bash
+# global.workflowSkipConfig comes back from `np nrn read` as a STRING holding JSON,
+# keyed in camelCase, where true means SKIP. When it says so, the dispatcher must
+# return before touching the provider or the workflow.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+export APPLICATION='{"repository_url":"https://bitbucket.org/acme/my-service"}'
+
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1" == "nrn" ]]; then
+  cat <<'JSON'
+{
+  "namespaces": { "global": { "workflowSkipConfig": "{\"createCodeRepository\":true,\"createImageRepository\":true}" } },
+  "nrn": "organization=1:account=2:namespace=3:application=4",
+  "omittedKeys": []
+}
+JSON
+else
+  echo '{}'
+fi
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+for step in code-repo/create_code_repository asset-repo/create_asset_repository; do
+  : > "$BB_CALLS"
+
+  # shellcheck disable=SC1090 # the path is the loop variable, by design
+  output=$(cd "$REPO_ROOT" && source "scripts/$step" 2>&1)
+  status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    echo "  FAIL: $step exited $status instead of returning 0:"
+    printf '%s\n' "$output" | sed 's/^/    /'
+    exit 1
+  fi
+
+  if [[ "$output" != *"workflowSkipConfig"* ]]; then
+    echo "  FAIL: $step did not say why it skipped:"
+    printf '%s\n' "$output" | sed 's/^/    /'
+    exit 1
+  fi
+
+  if grep -q "provider list\|service workflow exec" "$BB_CALLS"; then
+    echo "  FAIL: $step kept going after the skip. Calls:"
+    sed 's/^/    /' "$BB_CALLS"
+    exit 1
+  fi
+
+  # The key must be read once, with the application NRN.
+  if ! grep -q "nrn read --nrn organization=1:account=2:namespace=3:application=4 --ids global.workflowSkipConfig" "$BB_CALLS"; then
+    echo "  FAIL: $step did not read global.workflowSkipConfig for the application NRN. Calls:"
+    sed 's/^/    /' "$BB_CALLS"
+    exit 1
+  fi
+done

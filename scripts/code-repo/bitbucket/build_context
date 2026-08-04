@@ -1,0 +1,142 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/code-repo/bitbucket/_api
+source "$CURRENT_DIR/_api"
+
+# Collected by bb_resolve_or_fail and by the installation-url block below, reported
+# in the summary line at the end. Reset here because this file is SOURCED: a second
+# pass must not accumulate the first one's entries.
+BB_ENV_OVERRIDES=""
+
+# --- workspace -------------------------------------------------------------
+
+bb_resolve_or_fail BITBUCKET_WORKSPACE '.attributes.setup.workspace' \
+  "BITBUCKET_WORKSPACE is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.workspace / bitbucket.workspace) or in the environment."
+
+# --- installation URL and API base -----------------------------------------
+
+if [[ -n "${BITBUCKET_INSTALLATION_URL:-}" ]]; then
+  BB_ENV_OVERRIDES="${BB_ENV_OVERRIDES:+$BB_ENV_OVERRIDES }BITBUCKET_INSTALLATION_URL"
+else
+  # $CODE_REPOSITORY is `np provider list` output, whose attributes use the
+  # SCHEMA (snake_case) shape -- exactly like the GitLab provider reads
+  # .attributes.setup.installation_url. (The camelCase forms bitbucket.* are the
+  # NRN key names only.)
+  BITBUCKET_INSTALLATION_URL=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_url // empty')
+fi
+
+# Silent, like the values above: the resolved URL is in the summary line at the end
+# of this step, which is the only place it matters.
+if [[ -z "$BITBUCKET_INSTALLATION_URL" ]]; then
+  BITBUCKET_INSTALLATION_URL="https://bitbucket.org"
+fi
+
+# Strip any trailing slash so the URLs we build never double up.
+BITBUCKET_INSTALLATION_URL="${BITBUCKET_INSTALLATION_URL%/}"
+
+# Bitbucket Cloud serves its REST API from a DIFFERENT host than the web UI.
+# Keeping this a separate variable is the seam a future Data Center flavor would
+# use (DC serves REST 1.0 from <installation_url>/rest/api/1.0).
+if [[ -z "${BITBUCKET_API_BASE:-}" ]]; then
+  BITBUCKET_API_BASE="https://api.bitbucket.org/2.0"
+fi
+
+BITBUCKET_API_BASE="${BITBUCKET_API_BASE%/}"
+
+# --- auth ------------------------------------------------------------------
+#
+# nullplatform holds ONE credential for Bitbucket: a dedicated bot user's
+# Atlassian API token, plus that user's email (the HTTP Basic username). This is
+# a deliberate, validated-live decision, NOT app passwords (removed 2026-07-28),
+# NOT OAuth 2LO, and NOT a workspace access token:
+#
+#   * Enabling Bitbucket Pipelines requires a 2SV'd USER principal. An OAuth app
+#     (client_credentials) is refused with a PERMANENT 403 there, and a workspace
+#     access token -- explicitly "not tied to a user" -- fails the same check.
+#     Only a user-scoped API token works, on every plan (no Premium needed).
+#   * The token is long-lived (<=365 days), so there is no mint/refresh dance.
+#
+# Every REST call uses HTTP Basic (email:api_token); git transport uses the
+# username `x-bitbucket-api-token-auth` with the token as the password.
+#
+# CREDENTIAL SOURCING -- this is where Bitbucket DIFFERS from GitLab.
+# The bitbucket-configuration specification declares NO credential fields at all
+# (see main-providers-api, seeder 20260713000000). That is deliberate:
+# providers-api NULLIFIES secret attribute values on authenticated reads
+# (nullifySecrets in ProviderController), so a token stored on the provider would
+# come back from `np provider list` as null and could never reach this workflow.
+# GitLab's flow only works because its spec never marked access_token secret, a
+# laxity we deliberately did not copy.
+#
+# So both halves of the credential come from the environment: the email (the HTTP
+# Basic username) and the token. The record paths below are still read as a
+# harmless no-op, in case a privileged read is ever wired in, but env is the
+# documented source. The configuration fields (workspace, project_key,
+# installation_url) DO come back from the provider read as normal.
+
+BB_TRACK_OVERRIDE=no bb_resolve_or_fail BITBUCKET_EMAIL '.attributes.setup.email' \
+  "BITBUCKET_EMAIL is not set. It is the HTTP Basic username that pairs with BITBUCKET_API_TOKEN, so it lives next to the token in the environment of the ALM deployment, NOT on the bitbucket-configuration provider (which carries configuration only, no credentials). Set it to the bot user's Atlassian account email."
+
+if [[ -n "${BITBUCKET_API_TOKEN:-}" ]]; then
+  : # From the environment, as documented. Never echoed, not even redacted.
+else
+  # This is null in production (secret attributes are nullified on provider
+  # reads); kept for forward-compatibility and so the failure below is the
+  # single decision point.
+  BITBUCKET_API_TOKEN=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.api_token // empty')
+fi
+
+if [[ -z "$BITBUCKET_API_TOKEN" ]]; then
+  bb_fail "BITBUCKET_API_TOKEN is not set. The bot user's Atlassian API token is stored as a SECRET (setup.api_token / NRN bitbucket.apiToken), and nullplatform deliberately does NOT return secret attribute values on authenticated provider reads (np provider list) -- so, unlike the GitLab provider, ALM cannot read the Bitbucket token from the platform. Set it directly on the ALM deployment as the BITBUCKET_API_TOKEN environment variable. It must belong to a 2SV-enabled Bitbucket user -- that is the only principal Bitbucket lets enable Pipelines. (Bitbucket app passwords were removed on 2026-07-28 and are not supported.)"
+fi
+
+# --- project key -----------------------------------------------------------
+#
+# Effectively MANDATORY. Omit project.key when creating a repository and
+# Bitbucket does not error -- it SILENTLY files the repo under the workspace's
+# OLDEST project. Refuse to run rather than mis-file the customer's repository.
+
+bb_resolve_or_fail BITBUCKET_PROJECT_KEY '.attributes.setup.project_key' \
+  "BITBUCKET_PROJECT_KEY is not set. Configure it on the bitbucket-configuration provider (.attributes.setup.project_key / NRN bitbucket.projectKey) or in the environment. It cannot be omitted: Bitbucket would silently assign the new repository to the oldest project in the workspace."
+
+# --- repository slug -------------------------------------------------------
+#
+# REPOSITORY_NAME is `basename "$REPOSITORY_URL"` (see
+# scripts/code-repo/create_code_repository), so it may carry a .git suffix and
+# arbitrary case. Bitbucket slugifies the name it is given: send "My-Service"
+# and the repository is created at .../my-service, so links.html.href would come
+# back different from what we asked for -- and Contract A (core-entities matches
+# repository_url by EXACT string) would break. Normalise here, once.
+
+REPOSITORY_SLUG="${REPOSITORY_NAME%.git}"
+
+# Bitbucket keeps [a-z0-9._-] and folds every other character into '-', so
+# "My Service (v2)" becomes "my-service-v2". Reproduce that here rather than
+# discovering the difference from links.html.href afterwards. Runs of invalid
+# characters collapse into a single '-', and leading/trailing ones are dropped.
+REPOSITORY_SLUG=$(printf '%s' "$REPOSITORY_SLUG" \
+  | tr '[:upper:]' '[:lower:]' \
+  | sed -e 's/[^a-z0-9._-]\{1,\}/-/g' -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//')
+
+if [[ -z "$REPOSITORY_SLUG" ]]; then
+  bb_fail "Could not derive a repository slug from REPOSITORY_NAME='$REPOSITORY_NAME'"
+fi
+
+SLUG_NOTE=""
+if [[ "$REPOSITORY_SLUG" != "$REPOSITORY_NAME" ]]; then
+  SLUG_NOTE=" (slugified from '$REPOSITORY_NAME')"
+fi
+
+# One line for the whole resolved context. The per-value logging this replaced was
+# 10 lines of a 15-line successful run.
+echo "Bitbucket ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}${SLUG_NOTE} | project ${BITBUCKET_PROJECT_KEY} | bot ${BITBUCKET_EMAIL} | ${BITBUCKET_INSTALLATION_URL}${BB_ENV_OVERRIDES:+ | overridden from env: $BB_ENV_OVERRIDES}"
+
+export BITBUCKET_EMAIL
+export BITBUCKET_API_TOKEN
+export BITBUCKET_WORKSPACE
+export BITBUCKET_PROJECT_KEY
+export BITBUCKET_INSTALLATION_URL
+export BITBUCKET_API_BASE
+export REPOSITORY_SLUG

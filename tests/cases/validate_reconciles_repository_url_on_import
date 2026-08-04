@@ -1,0 +1,31 @@
+#!/bin/bash
+# Contract A on the IMPORT path. create_repository returns early on import, so
+# its reconciliation never runs -- yet the mismatch is if anything more likely
+# here: REPOSITORY_SLUG is slugified from the application's own repository_url,
+# so importing .../My-Service resolves the repository at .../my-service and
+# core-entities is left holding a URL that no longer matches byte for byte.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="import"
+export REPOSITORY_URL="https://bitbucket.org/acme/My-Service"
+
+fixture GET "/repositories/acme/my-service" 200 \
+  '{"links":{"html":{"href":"https://bitbucket.org/acme/my-service"}},"mainbranch":{"name":"develop"}}'
+
+run_step validate_repository_does_not_exist
+
+assert_status 0 || exit 1
+
+if ! grep -q 'application update' "$BB_CALLS"; then
+  echo "  FAIL: an imported repository's canonical URL was never reconciled. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+if ! grep -q 'https://bitbucket.org/acme/my-service' "$BB_CALLS"; then
+  echo "  FAIL: expected the application to be updated with the canonical lower-cased URL. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

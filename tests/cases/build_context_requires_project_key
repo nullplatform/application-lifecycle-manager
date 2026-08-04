@@ -1,0 +1,22 @@
+#!/bin/bash
+# project.key is effectively mandatory: omit it on create and Bitbucket SILENTLY
+# files the repo under the workspace's OLDEST project. Fail early and loudly
+# rather than mis-file the customer's repository. (Token comes from the env, as
+# in production; the record is the snake_case provider-list shape.)
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+clear_context
+
+export REPOSITORY_NAME="my-service"
+export BITBUCKET_API_TOKEN="env-token-xyz"
+export CODE_REPOSITORY='{"attributes":{"setup":{
+  "workspace":"acme",
+  "email":"bot@nullplatform.com",
+  "api_token":null
+}}}'
+
+run_step build_context
+
+assert_status 1 || exit 1
+assert_contains "BITBUCKET_PROJECT_KEY is not set" || exit 1

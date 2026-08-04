@@ -1,0 +1,24 @@
+#!/bin/bash
+# Contract A: core-entities resolves an application by an EXACT string match on
+# repository_url. Bitbucket lower-cases slugs, so if the application was created
+# with a mixed-case URL the canonical URL differs -- and `np build start` would
+# later fail with "could not get the app". Reconcile at provisioning time.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export TEMPLATE_URL=""
+export REPOSITORY_URL="https://bitbucket.org/acme/My-Service"
+
+fixture POST "/repositories/acme/my-service" 200 \
+  '{"links":{"html":{"href":"https://bitbucket.org/acme/my-service"}}}'
+
+run_step create_repository
+assert_status 0 || exit 1
+
+if ! grep -q 'application update' "$BB_CALLS"; then
+  echo "  FAIL: expected the application's repository_url to be reconciled. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

@@ -1,8 +1,17 @@
 #!/bin/bash
 
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/workflow_skip
+source "$CURRENT_DIR/../workflow_skip"
+
 # Workflow steps are sourced into one shared shell, so this must `return` and not `exit`.
-if [[ "${CREATE_ASSET_REPOSITORY:-true}" == "false" ]]; then
-  echo "CREATE_ASSET_REPOSITORY=false — skipping asset repository creation"
+#
+# The platform calls this one the IMAGE repository (workflowSkipConfig's
+# createImageRepository); here it is the asset repository. Same thing: the ECR or
+# docker-server registry the application's images are pushed to.
+if workflow_skip_step CREATE_ASSET_REPOSITORY createImageRepository; then
+  echo "Skipping asset repository creation"
   return 0
 fi
 

@@ -1,0 +1,27 @@
+#!/bin/bash
+# A single 429 must not abort provisioning. Bitbucket Cloud throttles, and by the
+# time create_secrets runs the repository already exists -- so giving up there
+# leaves a half-provisioned application behind.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export BB_RETRY_DELAY=0
+export CODE_REPOSITORY_STRATEGY="import"
+
+fixture_seq GET "/repositories/acme/my-service" 1 429 '{"error":{"message":"rate limited"}}'
+fixture_seq GET "/repositories/acme/my-service" 2 200 \
+  '{"links":{"html":{"href":"https://bitbucket.org/acme/my-service"}},"mainbranch":{"name":"main"}}'
+
+run_step validate_repository_does_not_exist
+
+assert_status 0 || exit 1
+assert_contains "https://bitbucket.org/acme/my-service" || exit 1
+
+calls=$(grep -c "^GET	/repositories/acme/my-service	" "$BB_CALLS")
+
+if [[ "$calls" -ne 2 ]]; then
+  echo "  FAIL: expected the throttled GET to be retried once (2 calls), saw $calls"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

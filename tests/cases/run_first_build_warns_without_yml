@@ -1,0 +1,18 @@
+#!/bin/bash
+# Triggering with no bitbucket-pipelines.yml on the branch returns 400. The app
+# was still created successfully, so warn -- do not fail the workflow.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CONFIG="/repositories/acme/my-service/pipelines_config"
+
+fixture GET "$CONFIG" 200 '{"enabled":true}'
+fixture POST "/repositories/acme/my-service/pipelines/" 400 \
+  '{"type":"error","error":{"message":"No pipelines configuration"}}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+assert_contains "Warning: Could not trigger the first build" || exit 1
+assert_contains "bitbucket-pipelines.yml" || exit 1

@@ -1,0 +1,38 @@
+#!/bin/bash
+# Test runner for the code-repo provider scripts.
+#
+#   tests/run              # everything
+#   tests/run <case-name>  # one case
+#
+# Each file in tests/cases is an independent bash script that exits non-zero on
+# failure. Deliberately no bats: this repo ships nothing but bash, curl and jq,
+# and its tests should need nothing more either.
+
+cd "$(dirname "$0")/.." || exit 1
+
+pass=0
+fail=0
+
+for case_file in tests/cases/*; do
+  [[ -f "$case_file" ]] || continue
+
+  name=$(basename "$case_file")
+
+  if [[ -n "$1" && "$name" != "$1" ]]; then
+    continue
+  fi
+
+  if output=$(bash "$case_file" 2>&1); then
+    echo "ok   $name"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $name"
+    printf '%s\n' "$output" | sed 's/^/     /'
+    fail=$((fail + 1))
+  fi
+done
+
+echo ""
+echo "$pass passed, $fail failed"
+
+[[ "$fail" -eq 0 ]]

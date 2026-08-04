@@ -1,0 +1,57 @@
+#!/bin/bash
+# The environment variable is the operator's manual override, so it wins over the
+# platform config -- in BOTH directions. Mind that the two are inverted:
+# CREATE_CODE_REPOSITORY=false skips, workflowSkipConfig.createCodeRepository=true
+# skips.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+export APPLICATION='{"repository_url":"https://bitbucket.org/acme/my-service"}'
+export CODE_REPOSITORY_PROVIDER="bitbucket"
+
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1" == "nrn" ]]; then
+  echo '{"namespaces":{"global":{"workflowSkipConfig":"{\"createCodeRepository\":true}"}}}'
+elif [[ "$1" == "provider" ]]; then
+  echo '{"results":[{"id":"cfg-1","specification_id":"ca7019c5-f7da-4b79-8fd6-28afbaea366b","attributes":{"setup":{"workspace":"acme"},"access":{}}}]}'
+else
+  echo '{}'
+fi
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+# The platform says skip; the operator says create. The operator wins.
+export CREATE_CODE_REPOSITORY="true"
+
+output=$(cd "$REPO_ROOT" && source scripts/code-repo/create_code_repository 2>&1)
+
+if ! grep -q "service workflow exec" "$BB_CALLS"; then
+  echo "  FAIL: CREATE_CODE_REPOSITORY=true did not override the platform skip:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi
+
+# And the reverse: the platform says nothing, the operator says skip.
+: > "$BB_CALLS"
+unset CREATE_CODE_REPOSITORY
+export CREATE_CODE_REPOSITORY="false"
+
+output=$(cd "$REPO_ROOT" && source scripts/code-repo/create_code_repository 2>&1)
+
+if grep -q "service workflow exec" "$BB_CALLS"; then
+  echo "  FAIL: CREATE_CODE_REPOSITORY=false did not skip. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+if [[ "$output" != *"CREATE_CODE_REPOSITORY=false"* ]]; then
+  echo "  FAIL: the skip was not explained:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi

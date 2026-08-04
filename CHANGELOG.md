@@ -5,12 +5,17 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
-## [Unreleased]
+## [0.3.0] - 2026-08-04
 
 ### Added
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
-- `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment flags to skip code or asset
-  repository creation independently. Both default to enabled, so existing behavior is unchanged.
+- Bitbucket Cloud code repository provider, authenticated with a dedicated bot user's Atlassian API
+  token.
+- Code and asset repository creation can each be skipped from the platform, through the
+  `global.workflowSkipConfig` NRN key (`createCodeRepository` / `createImageRepository`, where `true`
+  means skip). The `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment variables still
+  work and now override the platform in both directions. Both default to enabled, so existing
+  behavior is unchanged.
 
 ### Changed
 - The `ci` API key is now stored in the created repository as `NULLPLATFORM_API_KEY`, the name the

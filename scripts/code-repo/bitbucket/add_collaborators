@@ -1,0 +1,106 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/code-repo/bitbucket/_api
+source "$CURRENT_DIR/_api"
+
+# Bitbucket repository permissions are read | write | admin. Accept those
+# directly, and map the GitLab role names the platform already stores.
+get_permission() {
+  local role="$1"
+
+  case "$role" in
+    read | guest | reporter) echo "read" ;;
+    write | developer | maintainer) echo "write" ;;
+    admin | owner) echo "admin" ;;
+    *) echo "write" ;; # mirrors the GitLab provider's default of DEVELOPER
+  esac
+}
+
+MISSING_MEMBERS=()
+FAILED=0
+
+# Process substitution, NOT a pipe. `... | while read` would run the loop body in
+# a SUBSHELL, where FAILED and MISSING_MEMBERS would be discarded and an `exit 1`
+# would kill only the subshell -- which is exactly why the GitLab equivalents of
+# this script and of create_secrets can never actually fail the workflow.
+while read -r collaborator; do
+  [[ -z "$collaborator" ]] && continue
+
+  id=$(echo "$collaborator" | jq -r '.id')
+  role=$(echo "$collaborator" | jq -r '.role')
+  type=$(echo "$collaborator" | jq -r '.type')
+
+  permission=$(get_permission "$role")
+  body=$(jq -nc --arg permission "$permission" '{permission: $permission}')
+
+  # GitHub-shaped configurations say "team", GitLab-shaped ones say "group";
+  # Bitbucket has a single concept for both.
+  if [[ "$type" == "user" ]]; then
+    # Users are addressed by account_id or UUID (usernames were removed for
+    # GDPR), so a nickname is resolved through the workspace member list.
+    if ! bb_resolve_principal "$id"; then
+      echo "$BB_RESOLVE_ERROR"
+      FAILED=1
+      continue
+    fi
+
+    encoded="$BB_PRINCIPAL"
+
+    echo "Granting '$permission' on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} to user '$id'"
+
+    bb_api PUT "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/permissions-config/users/${encoded}" "$body"
+  elif [[ "$type" == "group" || "$type" == "team" ]]; then
+    encoded=$(bb_urlencode "$id")
+
+    echo "Granting '$permission' on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} to group '$id'"
+
+    bb_api PUT "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/permissions-config/groups/${encoded}" "$body"
+  else
+    echo "Error: unknown collaborator type '$type' for '$id'"
+    FAILED=1
+    continue
+  fi
+
+  case "$BB_HTTP_CODE" in
+    200 | 201 | 204)
+      echo "Granted '$permission' to '$id'"
+      ;;
+    404)
+      # ADR-3. repository:admin can only grant permissions to principals that
+      # are ALREADY workspace members, and Bitbucket has no API to invite one.
+      # But a wrong repository slug returns 404 too, so check which it is before
+      # blaming workspace membership and sending an admin to the members page.
+      bb_api GET "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}"
+
+      if [[ "$BB_HTTP_CODE" == "200" ]]; then
+        MISSING_MEMBERS+=("$type '$id'")
+      else
+        echo "Error: got 404 granting '$permission' to '$id', and repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} is not reachable either (HTTP $BB_HTTP_CODE). This is a repository problem, not a workspace membership one."
+      fi
+
+      FAILED=1
+      ;;
+    *)
+      echo "Error granting '$permission' to '$id' (HTTP $BB_HTTP_CODE): $BB_BODY"
+      FAILED=1
+      ;;
+  esac
+done < <(echo "$CODE_REPOSITORY_COLLABORATORS" | jq -c '.[]?' 2>/dev/null)
+
+if [[ ${#MISSING_MEMBERS[@]} -gt 0 ]]; then
+  echo "Error: the following collaborators are not members of the '$BITBUCKET_WORKSPACE' Bitbucket workspace:"
+
+  for member in "${MISSING_MEMBERS[@]}"; do
+    echo "  - $member"
+  done
+
+  echo "Bitbucket has no API to invite a user to a workspace, so nullplatform cannot add them for you. A workspace administrator must invite them at ${BITBUCKET_INSTALLATION_URL}/${BITBUCKET_WORKSPACE}/workspace/settings/members first. The repository ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} has already been created: once they are members, re-run this application creation with the 'import' strategy."
+fi
+
+if [[ "$FAILED" -ne 0 ]]; then
+  exit 1
+fi
+
+echo "Finished adding collaborators"

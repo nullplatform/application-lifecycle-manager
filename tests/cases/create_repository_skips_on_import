@@ -1,0 +1,18 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="import"
+export REPOSITORY_URL="https://bitbucket.org/acme/my-service"
+
+run_step create_repository
+
+assert_status 0 || exit 1
+assert_contains "Skipping repo creation" || exit 1
+
+if [[ -s "$BB_CALLS" ]]; then
+  echo "  FAIL: import strategy must not create anything. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

@@ -1,0 +1,6 @@
+#!/bin/bash
+# `np` CLI stub: records the invocation, returns empty JSON.
+
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+
+echo '{}'

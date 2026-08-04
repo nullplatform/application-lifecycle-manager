@@ -1,0 +1,20 @@
+#!/bin/bash
+# The platform stores the same collaborator ids for every provider: GitLab
+# resolves usernames, GitHub uses logins. Bitbucket needs an account_id or a UUID,
+# so a nickname has to be resolved through the workspace member list -- otherwise
+# every such id 404s and provisioning aborts AFTER the repository exists.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_COLLABORATORS='[{"id":"jdoe","role":"developer","type":"user"}]'
+
+fixture GET "/workspaces/acme/members?pagelen=100" 200 \
+  '{"values":[{"user":{"nickname":"jdoe","account_id":"712020:abc"}}]}'
+fixture PUT "/repositories/acme/my-service/permissions-config/users/712020%3Aabc" 200 \
+  '{"permission":"write"}'
+
+run_step add_collaborators
+
+assert_status 0 || exit 1
+assert_called PUT "/repositories/acme/my-service/permissions-config/users/712020%3Aabc" || exit 1

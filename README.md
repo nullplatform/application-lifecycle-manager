@@ -35,7 +35,7 @@ When an application is created, this service coordinates two main tasks:
 
 You must configure your code repository provider through **nullplatform platform settings** or the **nullplatform Terraform provider**.
 
-> **Note:** This repository supports **GitLab** and **GitHub** code repositories.
+> **Note:** This repository supports **GitLab**, **GitHub** and **Bitbucket Cloud** code repositories.
 
 The provider to use is taken from `CODE_REPOSITORY_PROVIDER`, or from the nullplatform account's
 `repository_provider` when that variable is not set. The matching configuration is then selected by
@@ -43,8 +43,67 @@ its provider specification, so an account may hold configurations for several pr
 without them interfering. If you configured a **custom** provider specification, set
 `CODE_REPOSITORY_SPECIFICATION_ID` in the environment to point the lookup at it.
 
-`azure-devops` is recognized by the lookup but its scripts are not implemented yet, so selecting it
-fails immediately with an explicit message instead of part-way through the workflow.
+The lookup recognizes `github`, `gitlab`, `bitbucket` and `azure-devops`, so none of them needs
+`CODE_REPOSITORY_SPECIFICATION_ID`. `azure-devops` has no scripts here yet, so selecting it fails
+immediately with an explicit message instead of part-way through the workflow.
+
+#### Bitbucket Cloud
+
+Configure the Bitbucket code-repository provider with the attributes below, either from the
+nullplatform UI or with the tofu module in [`scripts/code-repo/bitbucket/install/`](scripts/code-repo/bitbucket/install).
+
+
+| Attribute | Required | Source | Notes |
+|---|---|---|---|
+| `setup.workspace` | yes | provider or env | The Bitbucket workspace slug. |
+| `setup.project_key` | yes | provider or env | The key of the project new repositories are filed under. **Not optional**: omit it and Bitbucket silently assigns the repository to the workspace's oldest project. |
+| `setup.installation_url` | no | provider or env | Defaults to `https://bitbucket.org`. Drives the web UI and git remote hosts. The REST host is separate (`BITBUCKET_API_BASE`, default `https://api.bitbucket.org/2.0`), because Bitbucket Cloud serves its API from a different host. |
+| `access.collaborators` | no | provider | See the limitation below. `access.default_collaborators` is accepted too, for parity with the GitLab provider. |
+
+The credential is **not** part of the provider configuration. Both halves of it are environment
+variables on the ALM deployment:
+
+| Environment variable | Required | Notes |
+|---|---|---|
+| `BITBUCKET_EMAIL` | yes | The Atlassian account email of the dedicated Bitbucket **bot user**. HTTP Basic username for the API token. |
+| `BITBUCKET_API_TOKEN` | yes | The bot user's **Atlassian API token**: HTTP Basic password for the REST API and, with the git username `x-bitbucket-api-token-auth`, for git-over-HTTPS. See "credential sourcing" below. |
+
+> **Authentication is a dedicated bot user's Atlassian API token.** nullplatform must hold a
+> **user-scoped** credential because enabling Bitbucket Pipelines requires a two-step-verification
+> (2SV) enabled *user* principal — an OAuth app (2LO) is refused there with a permanent `403`, and a
+> workspace access token fails the same check. So: create a dedicated Bitbucket bot user, **enable
+> Bitbucket 2SV on it** (this is Bitbucket 2SV, *not* Atlassian-account 2FA), grant it repository /
+> pipeline / project admin on the workspace, and issue it an Atlassian API token. This works on
+> **every** Bitbucket plan (no Premium required). Atlassian API tokens expire in ≤365 days, so rotate
+> it before then. **Bitbucket app passwords are not supported** (Atlassian removed them on 2026-07-28).
+
+> **Credential sourcing — this is where Bitbucket differs from GitLab.** The `bitbucket-configuration`
+> specification declares **no credential fields at all**. That is deliberate: nullplatform clears
+> secret attribute values on authenticated provider reads, so a token stored on the provider would
+> come back as `null` from the `np provider list` call ALM uses to load its configuration. The GitLab
+> provider only works from the platform read because its spec never marked `access_token` secret, a
+> laxity not repeated here. **So `BITBUCKET_EMAIL` and `BITBUCKET_API_TOKEN` come from the ALM
+> deployment's environment, and nowhere else.** The configuration fields above can also be overridden
+> from the environment (`BITBUCKET_WORKSPACE`, `BITBUCKET_PROJECT_KEY`, `BITBUCKET_INSTALLATION_URL`),
+> which always wins over the provider record. If the token or the email is missing, provisioning
+> fails immediately with a message explaining exactly this.
+
+**Collaborators.** A user is addressed by Atlassian `account_id`, by Bitbucket UUID (braces
+included), or by workspace **nickname** — nicknames are resolved through the workspace member list,
+so the same collaborator ids the platform stores for GitLab and GitHub work here. An **email address
+cannot be used**: Bitbucket removed emails from its API. `type` is `user` or `group`, and `team` is
+accepted as a synonym of `group` for GitHub-shaped configurations. Roles are `read`, `write` and
+`admin`; the GitLab role names (`guest`, `reporter`, `developer`, `maintainer`, `owner`) are mapped
+onto them.
+
+**Limitation — collaborators must already be workspace members.** Bitbucket has no API to
+invite a user to a workspace, so `add_collaborators` can only *grant repository permissions* to
+principals who are already members. If a configured collaborator is not a member, repository
+creation fails with an error naming them; a workspace administrator must invite them first.
+
+**Limitation — no template import API.** Bitbucket Cloud cannot import a repository from a URL,
+and forking is no longer usable. Templates are therefore seeded with a real `git clone` + `git
+push`, squashed to a single initial commit. **`git` must be available on the agent host.**
 
 #### Workflow
 
@@ -116,17 +175,47 @@ The asset repository workflow is composed of the following tasks:
 
 ## Toggling repository creation
 
-The two responsibilities are independent, so you can disable either one with an environment
-variable set on the agent. This is useful when only one side is managed here — for example,
-creating code repositories while asset repositories are provisioned elsewhere.
+The two responsibilities are independent, so either one can be disabled. There are two ways to
+do it, and they compose: the platform decides by default, and the agent's environment can
+override it.
 
-| Variable                  | Default | Effect                                            |
-|---------------------------|---------|---------------------------------------------------|
-| `CREATE_CODE_REPOSITORY`  | enabled | Set to `false` to skip code repository creation.  |
-| `CREATE_ASSET_REPOSITORY` | enabled | Set to `false` to skip asset repository creation. |
+### From the platform
 
-Only the exact lowercase value `false` disables a step. Any other value, including unset,
-empty, and `FALSE`, keeps the default behavior of creating the repository.
+Each step reads the `global.workflowSkipConfig` NRN key for the application being created:
+
+```bash
+np nrn read --nrn "$applicationNrn" --ids global.workflowSkipConfig --format json
+```
+
+The value is a JSON object where **`true` means skip**:
+
+```json
+{ "createCodeRepository": true, "createRepositoryTag": true, "createImageRepository": true }
+```
+
+| Key | Step |
+|---|---|
+| `createCodeRepository` | code repository creation |
+| `createImageRepository` | asset repository creation (the platform calls it the image repository) |
+
+`createRepositoryTag` belongs to another service and is ignored here. A key that is absent, or
+set to anything other than `true`, means the step runs. The key is read once per workflow run.
+If it cannot be read at all, nothing is skipped and the step logs a warning — the same
+behavior as before this config existed.
+
+### From the agent's environment
+
+An environment variable set on the agent **overrides the platform** for that step, in both
+directions:
+
+| Variable                  | Effect                                                                   |
+|---------------------------|--------------------------------------------------------------------------|
+| `CREATE_CODE_REPOSITORY`  | `false` skips; any other value runs the step even if the platform says skip. |
+| `CREATE_ASSET_REPOSITORY` | `false` skips; any other value runs the step even if the platform says skip. |
+
+Mind that the two are inverted: `CREATE_CODE_REPOSITORY=false` skips, while
+`createCodeRepository: true` skips. Only the exact lowercase value `false` disables a step,
+so `FALSE` reads as "run it".
 
 Skipping a step is not an error: the hook still reports success, and the step that remains
 enabled runs normally. Setting both to `false` leaves the application created with no
