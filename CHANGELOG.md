@@ -5,16 +5,12 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
-## [Unreleased]
+## [0.3.0] - 2026-08-04
 
 ### Added
-- `scripts/code-repo/bitbucket/install/`: a tofu module that creates the Bitbucket code-repository
-  configuration for an account (workspace, project key, installation URL, default collaborators). The
-  specification itself is global and already seeded, so it is not installed here, and the bot user's
-  credentials are environment variables on this deployment rather than provider attributes.
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
 - Bitbucket Cloud code repository provider, authenticated with a dedicated bot user's Atlassian API
-  token over HTTP Basic (the only credential that can enable Bitbucket Pipelines).
+  token.
 - Code and asset repository creation can each be skipped from the platform, through the
   `global.workflowSkipConfig` NRN key (`createCodeRepository` / `createImageRepository`, where `true`
   means skip). The `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment variables still
@@ -27,13 +23,6 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   templates that reference that name must be updated.
 
 ### Fixed
-- Importing an existing Bitbucket repository now reconciles the application's `repository_url` with
-  the canonical URL Bitbucket reports, as creating one already did. Because the repository is looked
-  up by a slug derived from that URL, importing `.../My-Service` resolved `.../my-service` and left
-  the application unresolvable, so later builds failed with "could not get the app".
-- Stopping in-flight Bitbucket pipelines before the first build now reads only the most recent page
-  of pipelines instead of walking the repository's entire CI history, which cost one request per 20
-  past runs and was silently skipped altogether if any page in the walk failed.
 - The code repository configuration is now selected by matching the provider's specification ID
   instead of taking the first result. Accounts with more than one code repository configuration
   no longer risk picking a configuration that belongs to a different provider.
