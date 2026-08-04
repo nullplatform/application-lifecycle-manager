@@ -49,7 +49,9 @@ immediately with an explicit message instead of part-way through the workflow.
 
 #### Bitbucket Cloud
 
-Configure a `bitbucket-configuration` code-repository provider with:
+Configure the Bitbucket code-repository provider with the attributes below, either from the
+nullplatform UI or with the tofu module in [`scripts/code-repo/bitbucket/install/`](scripts/code-repo/bitbucket/install).
+
 
 | Attribute | Required | Source | Notes |
 |---|---|---|---|

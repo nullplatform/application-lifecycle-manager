@@ -1,0 +1,36 @@
+# Copy to terraform.tfvars and fill in. NEVER commit terraform.tfvars.
+#
+# Authentication: the nullplatform provider reads NULLPLATFORM_API_KEY from the
+# environment, so export it before running.
+#
+#   export NULLPLATFORM_API_KEY=<your api key>
+#   tofu init && tofu apply
+
+nrn                   = "organization=1255165411:account=95118862"
+bitbucket_workspace   = "nullplatform-onboarding"
+bitbucket_project_key = "IM"
+
+# Optional. Defaults to https://bitbucket.org.
+# bitbucket_installation_url = "https://bitbucket.org"
+
+# Optional. Every principal listed here must already be a member of the workspace,
+# because Bitbucket has no API to invite one. Roles are read, write or admin.
+# bitbucket_collaborators = [
+#   { id = "557058:af4a0b1e-0000-4000-8000-000000000000", type = "user", role = "write" },
+#   { id = "developers", type = "group", role = "read" },
+# ]
+
+# --- Then, on the Application Lifecycle Manager deployment ------------------
+#
+# The credential is NOT part of this configuration, and cannot be: nullplatform
+# nullifies secret attribute values on authenticated provider reads, so a token
+# stored here would come back null and never reach the workflow. Set both on the
+# agent's environment:
+#
+#   BITBUCKET_EMAIL      the Atlassian account email of your Bitbucket bot user
+#   BITBUCKET_API_TOKEN  that user's Atlassian API token
+#
+# The bot user needs two-step verification enabled in Bitbucket (Pipelines cannot
+# be turned on otherwise) plus repository, pipeline and project admin on the
+# workspace. Mind that admin does NOT imply write in Atlassian's granular scopes:
+# a token with only admin:repository:bitbucket cannot git push.

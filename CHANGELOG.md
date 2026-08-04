@@ -8,6 +8,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
+- `scripts/code-repo/bitbucket/install/`: a tofu module that creates the Bitbucket code-repository
+  configuration for an account (workspace, project key, installation URL, default collaborators). The
+  specification itself is global and already seeded, so it is not installed here, and the bot user's
+  credentials are environment variables on this deployment rather than provider attributes.
 - GitHub code repository provider (GitHub App auth via the `gh` CLI).
 - Bitbucket Cloud code repository provider, authenticated with a dedicated bot user's Atlassian API
   token over HTTP Basic (the only credential that can enable Bitbucket Pipelines).

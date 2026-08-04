@@ -9,3 +9,20 @@
 *.pem
 *.key
 secret.yaml
+
+# Tofu/Terraform — state can hold credentials, and .terraform/ holds provider binaries
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.tfbackend
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+backend-local.tf
