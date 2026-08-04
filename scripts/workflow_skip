@@ -3,11 +3,14 @@
 # Reads the platform's `global.workflowSkipConfig` NRN key and answers whether a
 # given step must be skipped. Sourced by the create_*_repository dispatchers.
 #
-# The key holds a JSON object as a STRING, keyed in camelCase, where `true` means
-# SKIP:
+# The key holds a JSON object as a STRING, keyed in camelCase, where `false` means
+# SKIP and anything else -- `true`, or the key not being there at all -- means run:
 #
-#   { "createCodeRepository": true, "createRepositoryTag": true,
-#     "createImageRepository": true }
+#   { "createCodeRepository": false, "createRepositoryTag": true,
+#     "createImageRepository": false }
+#
+# The key name reads like the opposite. It is not: each entry answers "create this?",
+# so `createCodeRepository: false` is the one that skips.
 #
 # As with every script here, this file is SOURCED into the workflow's shared
 # shell: no `set -e`, and messages go to stdout, which is the only stream
@@ -49,14 +52,19 @@ if ! type -t workflow_skip_config_load >/dev/null 2>&1; then
 fi
 
 if ! type -t workflow_skip_step >/dev/null 2>&1; then
-  # workflow_skip_step CREATE_ENV_VAR SKIP_KEY
+  # workflow_skip_step CREATE_ENV_VAR CONFIG_KEY
   #
   # Returns 0 when the step must be SKIPPED, 1 when it must run.
   #
+  # Both sources read the same way: `false` skips, and anything else runs. So
+  # CREATE_CODE_REPOSITORY=false and createCodeRepository: false both mean skip.
+  #
   # The environment variable wins whenever it is set: it is the operator's manual
-  # override of whatever the platform says. Mind that the two are inverted --
-  # CREATE_CODE_REPOSITORY=false means skip, while workflowSkipConfig's
-  # createCodeRepository=true means skip.
+  # override of whatever the platform says.
+  #
+  # An ABSENT key runs the step. Only an explicit `false` skips, so an account that
+  # never configured global.workflowSkipConfig keeps creating repositories -- which
+  # is also why the jq fallback below is `true` and not `false`.
   workflow_skip_step() {
     local env_var="$1"
     local key="$2"
@@ -75,11 +83,16 @@ if ! type -t workflow_skip_step >/dev/null 2>&1; then
 
     workflow_skip_config_load
 
-    local skip
-    skip=$(printf '%s' "$WORKFLOW_SKIP_CONFIG" | jq -r --arg key "$key" '.[$key] // false')
+    # `has($key)`, NOT `.[$key] // true`: jq's alternative operator treats FALSE as
+    # empty, so `false // true` yields true and the one value that must skip would
+    # sail straight through. (The previous semantics hid this: it was `// false`
+    # looking for `true`, which happened to work.)
+    local create
+    create=$(printf '%s' "$WORKFLOW_SKIP_CONFIG" \
+      | jq -r --arg key "$key" 'if has($key) then (.[$key] | tostring) else "true" end')
 
-    if [[ "$skip" == "true" ]]; then
-      echo "$WORKFLOW_SKIP_CONFIG_KEY.$key=true — skipping"
+    if [[ "$create" == "false" ]]; then
+      echo "$WORKFLOW_SKIP_CONFIG_KEY.$key=false — skipping"
       return 0
     fi
 

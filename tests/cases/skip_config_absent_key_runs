@@ -1,7 +1,10 @@
 #!/bin/bash
-# The environment variable is the operator's manual override, so it wins over the
-# platform config -- in BOTH directions. Both sources read the same way: `false`
-# skips, anything else runs.
+# Only an explicit `false` skips. A key that is absent must RUN the step, or an
+# account that never configured global.workflowSkipConfig would silently stop
+# creating repositories.
+#
+# This config skips the asset repository and says nothing about the code one, so it
+# also proves the two keys are read independently.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
@@ -15,7 +18,7 @@ cat > "$TEST_TMP/np" <<'STUB'
 #!/bin/bash
 printf 'np\t%s\n' "$*" >> "$BB_CALLS"
 if [[ "$1" == "nrn" ]]; then
-  echo '{"namespaces":{"global":{"workflowSkipConfig":"{\"createCodeRepository\":false}"}}}'
+  echo '{"namespaces":{"global":{"workflowSkipConfig":"{\"createImageRepository\":false}"}}}'
 elif [[ "$1" == "provider" ]]; then
   echo '{"results":[{"id":"cfg-1","specification_id":"ca7019c5-f7da-4b79-8fd6-28afbaea366b","attributes":{"setup":{"workspace":"acme"},"access":{}}}]}'
 else
@@ -25,31 +28,27 @@ STUB
 chmod +x "$TEST_TMP/np"
 export PATH="$TEST_TMP:$PATH"
 
-# The platform says skip; the operator says create. The operator wins.
-export CREATE_CODE_REPOSITORY="true"
-
+# createCodeRepository is absent -> the code repository step must run.
 output=$(cd "$REPO_ROOT" && source scripts/code-repo/create_code_repository 2>&1)
 
 if ! grep -q "service workflow exec" "$BB_CALLS"; then
-  echo "  FAIL: CREATE_CODE_REPOSITORY=true did not override the platform skip:"
+  echo "  FAIL: an absent key skipped the step. It must run:"
   printf '%s\n' "$output" | sed 's/^/    /'
   exit 1
 fi
 
-# And the reverse: the platform says nothing, the operator says skip.
+# createImageRepository is false -> the asset repository step must skip.
 : > "$BB_CALLS"
-unset CREATE_CODE_REPOSITORY
-export CREATE_CODE_REPOSITORY="false"
 
-output=$(cd "$REPO_ROOT" && source scripts/code-repo/create_code_repository 2>&1)
+output=$(cd "$REPO_ROOT" && source scripts/asset-repo/create_asset_repository 2>&1)
 
-if grep -q "service workflow exec" "$BB_CALLS"; then
-  echo "  FAIL: CREATE_CODE_REPOSITORY=false did not skip. Calls:"
+if grep -q "provider list" "$BB_CALLS"; then
+  echo "  FAIL: createImageRepository=false did not skip the asset repository. Calls:"
   sed 's/^/    /' "$BB_CALLS"
   exit 1
 fi
 
-if [[ "$output" != *"CREATE_CODE_REPOSITORY=false"* ]]; then
+if [[ "$output" != *"createImageRepository=false"* ]]; then
   echo "  FAIL: the skip was not explained:"
   printf '%s\n' "$output" | sed 's/^/    /'
   exit 1
