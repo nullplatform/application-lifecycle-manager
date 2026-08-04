@@ -6,9 +6,9 @@
 #   export NULLPLATFORM_API_KEY=<your api key>
 #   tofu init && tofu apply
 
-nrn                   = "organization=1255165411:account=95118862"
-bitbucket_workspace   = "nullplatform-onboarding"
-bitbucket_project_key = "IM"
+nrn                   = "organization=1:account=2"
+bitbucket_workspace   = "acme-corp"
+bitbucket_project_key = "AC"
 
 # Optional. Defaults to https://bitbucket.org.
 # bitbucket_installation_url = "https://bitbucket.org"
