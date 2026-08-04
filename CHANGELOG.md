@@ -8,11 +8,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [0.3.1] - 2026-08-04
 
 ### Fixed
-- `global.workflowSkipConfig` is read the right way round. Each entry answers "create this?", so
-  `createCodeRepository: false` skips the step and `true` runs it — it was doing the opposite, which
-  skipped repository creation for every account that had the config set to `true`.
-- An absent key now runs the step. It is read with `has()` rather than jq's `//` operator, which
-  treats `false` as empty and would have let the one value that must skip sail straight through.
+- Repository creation now honors `global.workflowSkipConfig` as documented: `false` skips a step, while `true` or an absent key creates the repository.
 
 ## [0.3.0] - 2026-08-04
 
@@ -21,10 +17,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Bitbucket Cloud code repository provider, authenticated with a dedicated bot user's Atlassian API
   token.
 - Code and asset repository creation can each be skipped from the platform, through the
-  `global.workflowSkipConfig` NRN key (`createCodeRepository` / `createImageRepository`). The
-  `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment variables still work and now
-  override the platform in both directions. Both default to enabled, so existing behavior is
-  unchanged.
+  `global.workflowSkipConfig` NRN key (`createCodeRepository` / `createImageRepository`, where `true`
+  means skip). The `CREATE_CODE_REPOSITORY` and `CREATE_ASSET_REPOSITORY` environment variables still
+  work and now override the platform in both directions. Both default to enabled, so existing
+  behavior is unchanged.
 
 ### Changed
 - The `ci` API key is now stored in the created repository as `NULLPLATFORM_API_KEY`, the name the
