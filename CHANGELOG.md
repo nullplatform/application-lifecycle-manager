@@ -5,6 +5,11 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
+## [0.3.1] - 2026-08-04
+
+### Fixed
+- Repository creation now honors `global.workflowSkipConfig` as documented: `false` skips a step, while `true` or an absent key creates the repository.
+
 ## [0.3.0] - 2026-08-04
 
 ### Added

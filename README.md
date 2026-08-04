@@ -187,21 +187,26 @@ Each step reads the `global.workflowSkipConfig` NRN key for the application bein
 np nrn read --nrn "$applicationNrn" --ids global.workflowSkipConfig --format json
 ```
 
-The value is a JSON object where **`true` means skip**:
+The value is a JSON object where each entry answers "create this?", so **`false` is what
+skips**:
 
 ```json
-{ "createCodeRepository": true, "createRepositoryTag": true, "createImageRepository": true }
+{ "createCodeRepository": false, "createRepositoryTag": true, "createImageRepository": false }
 ```
+
+The key name reads like the opposite of that, so it is worth repeating: `false` skips, `true`
+runs.
 
 | Key | Step |
 |---|---|
 | `createCodeRepository` | code repository creation |
 | `createImageRepository` | asset repository creation (the platform calls it the image repository) |
 
-`createRepositoryTag` belongs to another service and is ignored here. A key that is absent, or
-set to anything other than `true`, means the step runs. The key is read once per workflow run.
-If it cannot be read at all, nothing is skipped and the step logs a warning — the same
-behavior as before this config existed.
+`createRepositoryTag` belongs to another service and is ignored here. Only an explicit `false`
+skips: a key that is absent, or set to anything else, runs the step, so an account that never
+configured this keeps creating repositories. The key is read once per workflow run. If it
+cannot be read at all, nothing is skipped and the step logs a warning — the same behavior as
+before this config existed.
 
 ### From the agent's environment
 
@@ -213,9 +218,8 @@ directions:
 | `CREATE_CODE_REPOSITORY`  | `false` skips; any other value runs the step even if the platform says skip. |
 | `CREATE_ASSET_REPOSITORY` | `false` skips; any other value runs the step even if the platform says skip. |
 
-Mind that the two are inverted: `CREATE_CODE_REPOSITORY=false` skips, while
-`createCodeRepository: true` skips. Only the exact lowercase value `false` disables a step,
-so `FALSE` reads as "run it".
+Both sources read the same way, so there is nothing to invert: `false` skips and anything else
+runs. Only the exact lowercase value `false` disables a step, so `FALSE` reads as "run it".
 
 Skipping a step is not an error: the hook still reports success, and the step that remains
 enabled runs normally. Setting both to `false` leaves the application created with no

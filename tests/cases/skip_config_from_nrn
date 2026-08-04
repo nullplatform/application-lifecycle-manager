@@ -1,7 +1,8 @@
 #!/bin/bash
 # global.workflowSkipConfig comes back from `np nrn read` as a STRING holding JSON,
-# keyed in camelCase, where true means SKIP. When it says so, the dispatcher must
-# return before touching the provider or the workflow.
+# keyed in camelCase. Each entry answers "create this?", so FALSE is what skips.
+# When it says so, the dispatcher must return before touching the provider or the
+# workflow.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
@@ -16,7 +17,7 @@ printf 'np\t%s\n' "$*" >> "$BB_CALLS"
 if [[ "$1" == "nrn" ]]; then
   cat <<'JSON'
 {
-  "namespaces": { "global": { "workflowSkipConfig": "{\"createCodeRepository\":true,\"createImageRepository\":true}" } },
+  "namespaces": { "global": { "workflowSkipConfig": "{\"createCodeRepository\":false,\"createImageRepository\":false}" } },
   "nrn": "organization=1:account=2:namespace=3:application=4",
   "omittedKeys": []
 }
