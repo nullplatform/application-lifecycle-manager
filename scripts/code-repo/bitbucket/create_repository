@@ -77,7 +77,13 @@ echo "Repository created: $BITBUCKET_REPOSITORY_URL"
 # ---------------------------------------------------------------------------
 
 if [[ -z "${TEMPLATE_URL:-}" || "$TEMPLATE_URL" == "null" ]]; then
-  echo "No TEMPLATE_URL set (the application has no template_id); leaving $BITBUCKET_REPOSITORY_URL empty."
+  # Reaching this branch means CODE_REPOSITORY_STRATEGY is "create" (the
+  # "import" case already returned at the top of this file), and that strategy
+  # is only ever set when the application DOES have a template_id -- see
+  # create_code_repository. A failed template read now fails loudly there
+  # instead of leaving TEMPLATE_URL empty, so getting here means the template
+  # was read successfully but simply has no url configured.
+  echo "Template $TEMPLATE_ID has no url configured; leaving $BITBUCKET_REPOSITORY_URL empty."
 else
   # Clean URLs, with no credential in them: bb_git_authed supplies the token
   # through git's env-based config for every URL under BITBUCKET_INSTALLATION_URL,

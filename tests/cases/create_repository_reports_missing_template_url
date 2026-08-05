@@ -1,0 +1,33 @@
+#!/bin/bash
+# TEMPLATE_URL can be empty even when the application legitimately has a
+# template_id: create_code_repository now fails loudly on a broken `np
+# template read`, so the only way to reach here with an empty TEMPLATE_URL is
+# a template that resolved fine but has no url configured. The message must
+# say that, not blame a missing template_id it never checked.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export TEMPLATE_ID="123"
+export TEMPLATE_URL=""
+export REPOSITORY_URL="https://bitbucket.org/acme/my-service"
+
+fixture POST "/repositories/acme/my-service" 200 \
+  '{"links":{"html":{"href":"https://bitbucket.org/acme/my-service"}}}'
+
+run_step create_repository
+assert_status 0 || exit 1
+assert_contains "Template 123 has no url configured" || exit 1
+
+if [[ "$STEP_OUTPUT" == *"no template_id"* ]]; then
+  echo "  FAIL: message still blames a missing template_id:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+  exit 1
+fi
+
+if grep -q "git clone\|git push" "$BB_CALLS"; then
+  echo "  FAIL: should not attempt to seed when there is no template url. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

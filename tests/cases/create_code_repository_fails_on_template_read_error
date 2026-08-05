@@ -1,0 +1,53 @@
+#!/bin/bash
+# np template read can fail (bad id, auth hiccup, timeout) even when the
+# application legitimately has a template_id. Before this fix that failure was
+# swallowed: TEMPLATE_URL ended up empty and the failure only resurfaced three
+# steps later in bitbucket/create_repository as a misleading "no template_id"
+# message. It must instead fail loudly here, with the real error.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+export CREATE_CODE_REPOSITORY="true"
+export APPLICATION='{"repository_url":"https://bitbucket.org/acme/my-service","template_id":999}'
+
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1" == "template" ]]; then
+  echo "Error: template 999 not found" >&2
+  exit 1
+fi
+echo '{}'
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+output=$(cd "$REPO_ROOT" && source scripts/code-repo/create_code_repository 2>&1)
+status=$?
+
+if [[ "$status" -eq 0 ]]; then
+  echo "  FAIL: create_code_repository exited 0 despite a failed template read:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi
+
+if [[ "$output" != *"ERROR: failed to read template 999"* ]]; then
+  echo "  FAIL: did not report the real template read failure:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi
+
+if [[ "$output" == *"has no template_id"* ]]; then
+  echo "  FAIL: still blamed a missing template_id for a read failure:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi
+
+if grep -q "provider list" "$BB_CALLS"; then
+  echo "  FAIL: kept going past the failed template read. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
