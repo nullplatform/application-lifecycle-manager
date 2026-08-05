@@ -1,9 +1,4 @@
 #!/bin/bash
-# TEMPLATE_URL can be empty even when the application legitimately has a
-# template_id: create_code_repository now fails loudly on a broken `np
-# template read`, so the only way to reach here with an empty TEMPLATE_URL is
-# a template that resolved fine but has no url configured. The message must
-# say that, not blame a missing template_id it never checked.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT

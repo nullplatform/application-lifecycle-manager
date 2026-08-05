@@ -1,9 +1,4 @@
 #!/bin/bash
-# np template read can fail (bad id, auth hiccup, timeout) even when the
-# application legitimately has a template_id. Before this fix that failure was
-# swallowed: TEMPLATE_URL ended up empty and the failure only resurfaced three
-# steps later in bitbucket/create_repository as a misleading "no template_id"
-# message. It must instead fail loudly here, with the real error.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT

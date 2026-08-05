@@ -19,10 +19,6 @@ TEMPLATE_ID=$(echo "$APPLICATION" | jq -r '.template_id // empty' )
 if [[ -n "$TEMPLATE_ID" ]]; then
   CODE_REPOSITORY_STRATEGY=create
 
-  # Captured separately from the jq parse so a failed `np template read` (bad
-  # ID, auth hiccup, timeout) surfaces here with its real error, instead of
-  # silently leaving TEMPLATE_URL empty and being misread three steps later as
-  # "this application has no template_id" -- it does, we just failed to read it.
   TEMPLATE_READ_OUTPUT=$(np template read --id "$TEMPLATE_ID" --format json 2>&1)
   TEMPLATE_READ_EXIT=$?
 
