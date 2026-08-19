@@ -10,6 +10,50 @@ PIPELINES_CONFIG_PATH="/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/p
 BRANCH="${BITBUCKET_MAIN_BRANCH:-main}"
 
 # ---------------------------------------------------------------------------
+# 0. Configuration.
+#
+# Both values come from the ENVIRONMENT only -- unlike the workspace/project
+# settings, they are NOT read from the provider record. The
+# bitbucket-configuration specification declares no such fields, and these are
+# deployment-level switches for the ALM installation, not per-account
+# configuration.
+#
+#   BITBUCKET_TRIGGER_PIPELINE_ENABLED (default true)
+#     false = do not trigger the first build. Pipelines is still ENABLED on the
+#     repository (see step 1a for why).
+#
+#   BITBUCKET_PIPELINE_FILE (default bitbucket-pipelines.yml)
+#     Which file IN THE REPOSITORY -- seeded from the template repo by
+#     create_repository -- holds the pipeline definition. A template that names
+#     it something else (circleci.yaml) needs this, because Bitbucket only ever
+#     looks for bitbucket-pipelines.yml on its own. See steps 1b and 2.
+# ---------------------------------------------------------------------------
+
+BB_DEFAULT_PIPELINE_FILE="bitbucket-pipelines.yml"
+
+PIPELINE_FILE="${BITBUCKET_PIPELINE_FILE:-$BB_DEFAULT_PIPELINE_FILE}"
+
+# `${var,,}` would be shorter but is bash 4+; tests/run is also run on macOS,
+# where /bin/bash is 3.2.
+TRIGGER_FIRST_BUILD=$(printf '%s' "${BITBUCKET_TRIGGER_PIPELINE_ENABLED:-true}" \
+  | tr '[:upper:]' '[:lower:]')
+
+case "$TRIGGER_FIRST_BUILD" in
+  true | 1 | yes)
+    TRIGGER_FIRST_BUILD="true"
+    ;;
+  false | 0 | no)
+    TRIGGER_FIRST_BUILD="false"
+    ;;
+  *)
+    # Do NOT read an unrecognised value as "off": silently skipping the build is
+    # the surprising direction to fail in.
+    echo "Warning: BITBUCKET_TRIGGER_PIPELINE_ENABLED='${BITBUCKET_TRIGGER_PIPELINE_ENABLED}' is not a boolean, so the first build WILL be triggered. Set it to 'false' to skip it."
+    TRIGGER_FIRST_BUILD="true"
+    ;;
+esac
+
+# ---------------------------------------------------------------------------
 # 1. Enable Pipelines.
 #
 # Pipelines is OFF by default, even when bitbucket-pipelines.yml is present, so
@@ -61,7 +105,83 @@ if [[ "$PIPELINES_ENABLED" != "true" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 1b. Reconcile what is already running (import strategy only).
+# 1a. Stop here when the first build is switched off.
+#
+# Deliberately AFTER the enable block: BITBUCKET_TRIGGER_PIPELINE_ENABLED=false
+# means "do not run a build for me now", NOT "leave Pipelines off" -- a customer
+# whose builds are triggered by their own pushes still wants Pipelines enabled on
+# the repository.
+#
+# Equally deliberately BEFORE the reconcile below: that block CANCELS whatever is
+# running on the branch because it is about to trigger a replacement. Cancelling
+# and then not re-triggering would leave the branch with no build at all.
+# ---------------------------------------------------------------------------
+
+if [[ "$TRIGGER_FIRST_BUILD" != "true" ]]; then
+  echo "BITBUCKET_TRIGGER_PIPELINE_ENABLED=false: Pipelines is enabled on ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}, but the first build will not be triggered"
+  return 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1b. Read the pipeline definition, when it is not the default file.
+#
+# Done HERE, before the reconcile below, on purpose: every way this can give up
+# (file missing, unreadable, empty) ends in "no build is triggered", and the
+# reconcile CANCELS whatever is running on the branch. Reading first means a
+# missing file never costs the customer a build that was already in flight.
+#
+# The result is kept in PIPELINE_YAML rather than read off BB_BODY at trigger
+# time, because every later bb_api call overwrites BB_BODY.
+# ---------------------------------------------------------------------------
+
+PIPELINE_YAML=""
+
+if [[ "$PIPELINE_FILE" != "$BB_DEFAULT_PIPELINE_FILE" ]]; then
+  # An absolute path or a `..` segment would be resolved away by curl and send
+  # this GET somewhere else in the API entirely. Operator-set, so this is a
+  # misconfiguration guard rather than a security boundary -- but it also catches
+  # the honest "/bitbucket-pipelines.yml".
+  case "/$PIPELINE_FILE/" in
+    //* | */../*)
+      echo "Warning: BITBUCKET_PIPELINE_FILE='$PIPELINE_FILE' must be a path relative to the repository root, with no leading '/' and no '..' segment. The first build was not triggered."
+      return 0
+      ;;
+  esac
+
+  # The file arrives in the repository with the template seed (create_repository),
+  # so read it back from the very branch we are about to build. bb_encode_path,
+  # not bb_urlencode: the configured name may be a path ("ci/pipelines.yml") and
+  # its separators must survive.
+  bb_api GET "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/src/$(bb_urlencode "$BRANCH")/$(bb_encode_path "$PIPELINE_FILE")"
+
+  case "$BB_HTTP_CODE" in
+    200)
+      PIPELINE_YAML="$BB_BODY"
+      ;;
+    404)
+      # The application was created successfully either way, so warn rather than
+      # fail -- same posture as the 400 at the end of this file. Naming the
+      # configured file here is the point of the whole variable: without it
+      # Bitbucket answers a 400 that mentions a file the template never had.
+      echo "Warning: branch '$BRANCH' of ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} has no '$PIPELINE_FILE' (BITBUCKET_PIPELINE_FILE), so there is no pipeline to trigger."
+      return 0
+      ;;
+    *)
+      echo "Warning: could not read '$PIPELINE_FILE' from branch '$BRANCH' of ${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG} (HTTP $BB_HTTP_CODE), so the first build was not triggered: $BB_BODY"
+      return 0
+      ;;
+  esac
+
+  # Never echoed: the file is the customer's, and posting it is the only thing we
+  # do with it.
+  if [[ -z "$PIPELINE_YAML" ]]; then
+    echo "Warning: '$PIPELINE_FILE' on branch '$BRANCH' is empty, so the first build was not triggered."
+    return 0
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 1c. Reconcile what is already running (import strategy only).
 #
 # A freshly created repository cannot have pipelines yet -- Pipelines is enabled
 # after the seed push -- but an imported one can, and triggering on top of an
@@ -108,26 +228,51 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Trigger the first build.
 #
+# Two shapes, because Bitbucket's trigger API CANNOT be pointed at an alternate
+# configuration file -- there is no config_path/configuration_sources input:
+#
+#   * BITBUCKET_PIPELINE_FILE is the default -> plain JSON trigger. Bitbucket
+#     reads bitbucket-pipelines.yml off the branch itself. Unchanged behaviour,
+#     which is why this is not routed through the on-demand path as well.
+#
+#   * BITBUCKET_PIPELINE_FILE is a custom name -> "on-demand pipeline": read the
+#     file out of the repository and POST its CONTENTS as the request body, with
+#     Content-Type: application/yaml and the target as QUERY parameters (the body
+#     is the YAML, so there is nowhere else to put the target). Inlining the YAML
+#     is the only supported way to run a definition that is not named
+#     bitbucket-pipelines.yml.
+#     https://www.atlassian.com/blog/bitbucket/on-demand-pipelines-via-api
+#
 # Note the TRAILING SLASH on /pipelines/ -- the endpoint is spelled that way.
 # ---------------------------------------------------------------------------
 
-TRIGGER_BODY=$(jq -nc --arg branch "$BRANCH" \
-  '{target: {type: "pipeline_ref_target", ref_type: "branch", ref_name: $branch}}')
+echo "Triggering the first build on branch '$BRANCH' from '$PIPELINE_FILE'"
 
-echo "Triggering the first build on branch '$BRANCH'"
+if [[ "$PIPELINE_FILE" == "$BB_DEFAULT_PIPELINE_FILE" ]]; then
+  TRIGGER_BODY=$(jq -nc --arg branch "$BRANCH" \
+    '{target: {type: "pipeline_ref_target", ref_type: "branch", ref_name: $branch}}')
 
-bb_api POST "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/" "$TRIGGER_BODY"
+  bb_api POST "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/" "$TRIGGER_BODY"
+else
+  TRIGGER_QUERY="target.type=pipeline_ref_target&target.ref_type=branch&target.ref_name=$(bb_urlencode "$BRANCH")"
+
+  bb_api POST \
+    "/repositories/${BITBUCKET_WORKSPACE}/${REPOSITORY_SLUG}/pipelines/?${TRIGGER_QUERY}" \
+    "$PIPELINE_YAML" "application/yaml"
+fi
 
 case "$BB_HTTP_CODE" in
   200 | 201)
     echo "Pipeline triggered successfully: build #$(echo "$BB_BODY" | jq -r '.build_number // "?"')"
     ;;
   400)
-    # Triggering when the branch has no bitbucket-pipelines.yml returns 400. An
+    # Triggering when the branch has no pipeline definition returns 400. An
     # imported repository may legitimately not have one yet, and the application
     # was created successfully either way -- so warn rather than fail the whole
-    # workflow. This matches the GitLab step's posture.
-    echo "Warning: Could not trigger the first build. Bitbucket rejected the request, which usually means branch '$BRANCH' has no bitbucket-pipelines.yml. Response: $BB_BODY"
+    # workflow. This matches the GitLab step's posture. On the on-demand path the
+    # file was already read successfully, so there a 400 means Bitbucket rejected
+    # its CONTENTS.
+    echo "Warning: Could not trigger the first build. Bitbucket rejected the request, which usually means branch '$BRANCH' has no valid '$PIPELINE_FILE'. Response: $BB_BODY"
     ;;
   *)
     echo "Warning: Could not trigger the first build (HTTP $BB_HTTP_CODE): $BB_BODY"

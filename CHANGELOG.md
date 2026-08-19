@@ -5,6 +5,18 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
+## [Unreleased]
+
+### Added
+- Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED` (default `true`) turns off triggering the first
+  build after a repository is created. Bitbucket Pipelines is still enabled on the repository, only
+  the build is not started.
+- Bitbucket: `BITBUCKET_PIPELINE_FILE` (default `bitbucket-pipelines.yml`) selects which file in the
+  repository holds the pipeline definition, for templates that name it something else. A custom file
+  is run as an on-demand pipeline, since Bitbucket's trigger API only ever looks for
+  `bitbucket-pipelines.yml`; if it is missing from the branch, the step now warns naming that file
+  instead of reporting a rejected build.
+
 ## [0.3.0] - 2026-08-04
 
 ### Added

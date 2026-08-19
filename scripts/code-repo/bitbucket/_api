@@ -22,16 +22,21 @@
 # exports them; every REST call here sends them as Basic auth, and git transport
 # uses the username `x-bitbucket-api-token-auth` with the token as the password.
 
-# bb_api METHOD PATH [BODY]
+# bb_api METHOD PATH [BODY] [CONTENT_TYPE]
 #
 # Calls the Bitbucket REST API and sets BB_HTTP_CODE and BB_BODY. It never
 # fails: every caller branches on the status code, because for Bitbucket the
 # code is the meaning (404 = "free" on one endpoint, "never enabled" on
 # another; 409 = "exists"; 401 != "missing").
+#
+# CONTENT_TYPE defaults to application/json. The one caller that overrides it is
+# the on-demand pipeline trigger in run_first_build, which sends the pipeline
+# YAML itself as the request body.
 bb_api() {
   local method="$1"
   local path="$2"
   local body="${3:-}"
+  local content_type="${4:-application/json}"
 
   local tmp cfg body_file
   tmp=$(mktemp)
@@ -52,7 +57,7 @@ bb_api() {
     -w '%{http_code}'
     -X "$method"
     --config "$cfg"
-    -H "Content-Type: application/json"
+    -H "Content-Type: $content_type"
   )
 
   if [[ -n "$body" ]]; then
@@ -61,7 +66,10 @@ bb_api() {
     body_file=$(mktemp)
     chmod 600 "$body_file"
     printf '%s' "$body" > "$body_file"
-    args+=(--data "@$body_file")
+    # --data-binary, NOT --data: curl's --data STRIPS newlines out of an @file,
+    # which would flatten a YAML body into a single unparseable line. Every JSON
+    # body here is single-line (jq -nc), so this is a no-op for them.
+    args+=(--data-binary "@$body_file")
   fi
 
   local attempt=1
@@ -196,6 +204,16 @@ bb_resolve_or_fail() {
 # spaces and other characters that must not reach the URL raw.
 bb_urlencode() {
   jq -rn --arg value "$1" '$value | @uri'
+}
+
+# bb_encode_path VALUE
+#
+# Percent-encodes a MULTI-segment repository path, keeping the '/' separators.
+# bb_urlencode cannot be used for this: it encodes '/' as %2F, which turns
+# "ci/pipelines.yml" into one literal file name. A path segment carrying a space
+# still has to be encoded, hence not passing the value through raw either.
+bb_encode_path() {
+  jq -rn --arg value "$1" '$value | split("/") | map(@uri) | join("/")'
 }
 
 # bb_resolve_principal ID

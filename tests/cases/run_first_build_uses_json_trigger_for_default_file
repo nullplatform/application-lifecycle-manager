@@ -1,0 +1,27 @@
+#!/bin/bash
+# Backwards compatibility: with no BITBUCKET_PIPELINE_FILE set, the step keeps
+# the plain JSON trigger and lets Bitbucket resolve bitbucket-pipelines.yml
+# itself. It must NOT read the file through the src API -- that would add a call
+# (and a new failure mode) to every existing deployment.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CONFIG="/repositories/acme/my-service/pipelines_config"
+TRIGGER="/repositories/acme/my-service/pipelines/"
+
+fixture GET "$CONFIG" 200 '{"enabled":true}'
+fixture POST "$TRIGGER" 201 '{"build_number":3}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+assert_called POST "$TRIGGER" || exit 1
+assert_contains "application/json" "$(request_content_type POST "$TRIGGER")" || exit 1
+assert_contains "pipeline_ref_target" "$(request_body POST "$TRIGGER")" || exit 1
+
+if grep -q "/src/" "$BB_CALLS"; then
+  echo "  FAIL: read the pipeline file through the src API on the default path. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

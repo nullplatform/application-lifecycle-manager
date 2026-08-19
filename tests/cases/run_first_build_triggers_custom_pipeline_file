@@ -1,0 +1,48 @@
+#!/bin/bash
+# The pipeline definition ships in the template repository, and a template may
+# name it something other than bitbucket-pipelines.yml. Bitbucket's trigger API
+# cannot be pointed at another path, so the file is read out of the repository
+# and its CONTENTS are posted as an on-demand pipeline: Content-Type
+# application/yaml, target in the query string.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export BITBUCKET_PIPELINE_FILE="circleci.yaml"
+
+CONFIG="/repositories/acme/my-service/pipelines_config"
+SRC="/repositories/acme/my-service/src/main/circleci.yaml"
+TRIGGER="/repositories/acme/my-service/pipelines/?target.type=pipeline_ref_target&target.ref_type=branch&target.ref_name=main"
+
+fixture GET "$CONFIG" 200 '{"enabled":true}'
+fixture GET "$SRC" 200 'pipelines:
+  default:
+    - step:
+        script:
+          - echo build'
+fixture POST "$TRIGGER" 201 '{"build_number":1}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+assert_called GET "$SRC" || exit 1
+assert_called POST "$TRIGGER" || exit 1
+assert_contains "application/yaml" "$(request_content_type POST "$TRIGGER")" || exit 1
+
+# The YAML itself is the body -- not a JSON envelope around it.
+BODY=$(request_body POST "$TRIGGER")
+assert_contains "pipelines:" "$BODY" || exit 1
+assert_contains "echo build" "$BODY" || exit 1
+
+# The multi-line file must survive as multiple lines; --data would have stripped
+# the newlines and Bitbucket would reject the YAML.
+assert_contains '\n' "$BODY" || exit 1
+
+assert_contains "build #1" || exit 1
+
+# The plain JSON trigger must NOT also be used.
+if grep -qF "$(printf 'POST\t/repositories/acme/my-service/pipelines/\t')" "$BB_CALLS"; then
+  echo "  FAIL: fell back to the default JSON trigger. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

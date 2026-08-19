@@ -1,0 +1,30 @@
+#!/bin/bash
+# BITBUCKET_TRIGGER_PIPELINE_ENABLED=false means "do not run a build for me",
+# NOT "leave Pipelines off": the repository setting is still enabled, only the
+# trigger is skipped. The import strategy is used here on purpose -- it is the
+# path that CANCELS in-flight pipelines before re-triggering, and cancelling
+# without re-triggering would leave the branch with no build at all.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export BITBUCKET_TRIGGER_PIPELINE_ENABLED="false"
+export CODE_REPOSITORY_STRATEGY="import"
+
+CONFIG="/repositories/acme/my-service/pipelines_config"
+
+fixture GET "$CONFIG" 404 '{"type":"error"}'
+fixture PUT "$CONFIG" 200 '{"enabled":true}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+assert_called PUT "$CONFIG" || exit 1
+assert_contains "will not be triggered" || exit 1
+
+# Nothing may touch /pipelines/: no listing, no stop, no trigger.
+if grep -q "/pipelines/" "$BB_CALLS"; then
+  echo "  FAIL: the step reached the pipelines endpoint with the trigger disabled. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
