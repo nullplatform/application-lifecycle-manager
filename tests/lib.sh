@@ -88,11 +88,19 @@ capture_export() {
   )
 }
 
-# request_body METHOD PATH -> the JSON body sent with that request
+# request_body METHOD PATH -> the body sent with that request. Newlines come back
+# escaped as a literal \n, the way the curl stub records them.
 request_body() {
   local method="$1" path="$2"
 
   grep -F "$(printf '%s\t%s\t' "$method" "$path")" "$BB_CALLS" | head -1 | cut -f3
+}
+
+# request_content_type METHOD PATH -> the Content-Type header sent with it
+request_content_type() {
+  local method="$1" path="$2"
+
+  grep -F "$(printf '%s\t%s\t' "$method" "$path")" "$BB_CALLS" | head -1 | cut -f4
 }
 
 assert_status() {

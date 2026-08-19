@@ -1,0 +1,36 @@
+#!/bin/bash
+# A configured pipeline file that is not in the repository is a warning, not a
+# failure -- the application was created successfully. The message must name the
+# CONFIGURED file: the whole point of BITBUCKET_PIPELINE_FILE is that pointing at
+# bitbucket-pipelines.yml would send the operator hunting for the wrong file.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export BITBUCKET_PIPELINE_FILE="circleci.yaml"
+
+# The import strategy is what makes this test worth having: that path CANCELS the
+# pipelines already running on the branch before triggering a replacement. Since a
+# missing file means no replacement is ever triggered, the file has to be read
+# BEFORE anything is cancelled -- otherwise a repository imported mid-build loses
+# that build and gets nothing back.
+export CODE_REPOSITORY_STRATEGY="import"
+
+CONFIG="/repositories/acme/my-service/pipelines_config"
+SRC="/repositories/acme/my-service/src/main/circleci.yaml"
+
+fixture GET "$CONFIG" 200 '{"enabled":true}'
+fixture GET "$SRC" 404 '{"type":"error","error":{"message":"No such file"}}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+assert_contains "circleci.yaml" || exit 1
+assert_contains "no pipeline to trigger" || exit 1
+
+# No trigger, and just as importantly no listing and no stopPipeline.
+if grep -q "/pipelines/" "$BB_CALLS"; then
+  echo "  FAIL: touched the pipelines endpoint even though the pipeline file is missing. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

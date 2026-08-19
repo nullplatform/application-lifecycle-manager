@@ -1,0 +1,24 @@
+#!/bin/bash
+# BITBUCKET_PIPELINE_FILE is interpolated into an API path. curl resolves '..'
+# and a leading '/' away before sending, so a misconfigured value would send the
+# read somewhere else in the API entirely. Refuse it instead, and never make the
+# call.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export BITBUCKET_PIPELINE_FILE="../../../../workspaces/acme"
+
+CONFIG="/repositories/acme/my-service/pipelines_config"
+fixture GET "$CONFIG" 200 '{"enabled":true}'
+
+run_step run_first_build
+
+assert_status 0 || exit 1
+assert_contains "relative to the repository root" || exit 1
+
+if grep -q "/src/" "$BB_CALLS"; then
+  echo "  FAIL: made the src call with an escaping path. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

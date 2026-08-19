@@ -5,6 +5,12 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
+## [Unreleased]
+
+### Added
+- Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses which pipeline file from the template is used, for templates that do not name it `bitbucket-pipelines.yml`.
+- Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build after a repository is created.
+
 ## [0.3.0] - 2026-08-04
 
 ### Added

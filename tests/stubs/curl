@@ -6,7 +6,7 @@
 # what was actually sent.
 #
 # Honours the exact flag shapes the scripts use:
-#   bb_api:      -s -o FILE -w '%{http_code}' -X METHOD -H ... [--data BODY] URL
+#   bb_api:      -s -o FILE -w '%{http_code}' -X METHOD -H ... [--data-binary BODY] URL
 #   OAuth mint:  -s -u KEY:SECRET -X POST -d grant_type=client_credentials URL
 #
 # As with real curl, the status code is echoed to stdout ONLY when -w asks for
@@ -15,6 +15,7 @@
 method="GET"
 out=""
 data=""
+content_type=""
 url=""
 want_code=0
 
@@ -23,13 +24,25 @@ while [[ $# -gt 0 ]]; do
     -X) method="$2"; shift 2 ;;
     -o) out="$2"; shift 2 ;;
     -w) want_code=1; shift 2 ;;
-    -H|-u) shift 2 ;;
+    -H)
+      # The request Content-Type is part of the contract with Bitbucket -- the
+      # on-demand pipeline trigger sends YAML where every other call sends JSON --
+      # so record it instead of dropping the header on the floor.
+      if [[ "$2" == Content-Type:* ]]; then
+        content_type="${2#Content-Type: }"
+      fi
+      shift 2
+      ;;
+    -u) shift 2 ;;
     # Credentials travel in a 0600 config file, never on the command line.
     --config|-K) shift 2 ;;
     -d) data="$2"; shift 2 ;;
-    --data)
-      # `--data @FILE` keeps secret request bodies off argv too. Read the file so
-      # request_body assertions still see the JSON that was actually sent.
+    --data|--data-binary)
+      # `--data-binary @FILE` keeps secret request bodies off argv too. Read the
+      # file so request_body assertions still see what was actually sent. Real
+      # curl differs between the two flags -- --data strips newlines, which is
+      # exactly why bb_api uses --data-binary -- but for the stub both mean
+      # "this is the body".
       if [[ "$2" == @* ]]; then
         data=$(cat "${2#@}")
       else
@@ -44,7 +57,11 @@ done
 
 path="${url#https://api.bitbucket.org/2.0}"
 
-printf '%s\t%s\t%s\n' "$method" "$path" "$data" >> "$BB_CALLS"
+# One line per call, so a body that carries newlines (a YAML pipeline definition)
+# is escaped rather than allowed to break the TSV apart.
+escaped_data=$(printf '%s' "$data" | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }')
+
+printf '%s\t%s\t%s\t%s\n' "$method" "$path" "$escaped_data" "$content_type" >> "$BB_CALLS"
 
 key="${method}_$(printf '%s' "$path" | sed -e 's|[^A-Za-z0-9]|_|g')"
 

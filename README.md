@@ -68,6 +68,25 @@ variables on the ALM deployment:
 | `BITBUCKET_EMAIL` | yes | The Atlassian account email of the dedicated Bitbucket **bot user**. HTTP Basic username for the API token. |
 | `BITBUCKET_API_TOKEN` | yes | The bot user's **Atlassian API token**: HTTP Basic password for the REST API and, with the git username `x-bitbucket-api-token-auth`, for git-over-HTTPS. See "credential sourcing" below. |
 
+Two more environment variables control the **first build**. Both are read from the ALM deployment's
+environment only — they are not provider attributes:
+
+| Environment variable | Default | Notes |
+|---|---|---|
+| `BITBUCKET_TRIGGER_PIPELINE_ENABLED` | `true` | Set to `false` to skip triggering the first build after the repository is created. Bitbucket Pipelines is **still enabled** on the repository — only the build is not started. For customers whose CI runs elsewhere, or who prefer their own first push to start it. |
+| `BITBUCKET_PIPELINE_FILE` | `bitbucket-pipelines.yml` | The file **inside the repository** (it arrives with the template seed) that holds the pipeline definition. Set it when the template names it something else, e.g. `circleci.yaml`. A path is accepted (`ci/pipelines.yml`). |
+
+> **How `BITBUCKET_PIPELINE_FILE` works.** Bitbucket's trigger API cannot be pointed at an alternate
+> configuration file — there is no such input. So when the configured name is *not* the default, ALM
+> reads the file out of the branch it is about to build and triggers an
+> [on-demand pipeline](https://www.atlassian.com/blog/bitbucket/on-demand-pipelines-via-api): the
+> file's **contents** are posted as the request body (`Content-Type: application/yaml`). Two
+> consequences. The file must contain valid **Bitbucket Pipelines** YAML, whatever it is named — a
+> real CircleCI configuration will be rejected by Bitbucket. And if the file is not on the branch,
+> the step warns naming *that* file and skips the build, instead of failing. When the variable is
+> left at its default, nothing changes: the plain trigger is used and Bitbucket resolves
+> `bitbucket-pipelines.yml` itself.
+
 > **Authentication is a dedicated bot user's Atlassian API token.** nullplatform must hold a
 > **user-scoped** credential because enabling Bitbucket Pipelines requires a two-step-verification
 > (2SV) enabled *user* principal — an OAuth app (2LO) is refused there with a permanent `403`, and a
