@@ -8,14 +8,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
-- Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED` (default `true`) turns off triggering the first
-  build after a repository is created. Bitbucket Pipelines is still enabled on the repository, only
-  the build is not started.
-- Bitbucket: `BITBUCKET_PIPELINE_FILE` (default `bitbucket-pipelines.yml`) selects which file in the
-  repository holds the pipeline definition, for templates that name it something else. A custom file
-  is run as an on-demand pipeline, since Bitbucket's trigger API only ever looks for
-  `bitbucket-pipelines.yml`; if it is missing from the branch, the step now warns naming that file
-  instead of reporting a rejected build.
+- Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses which pipeline file from the template is used, for templates that do not name it `bitbucket-pipelines.yml`.
+- Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build after a repository is created.
 
 ## [0.3.0] - 2026-08-04
 
