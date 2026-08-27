@@ -270,6 +270,29 @@ Before you begin, you must:
     - `secret-reader`
 - Fetch the **NRN** (nullplatform resource name) for the account you want to configure.
 
+> **Provisioning the key with OpenTofu.** If you create this API key with the nullplatform
+> `api_key` module, make sure `admin` is included in `custom_role_slugs` — without it the agent
+> does not have enough permissions to manage code and asset repositories:
+>
+> ```hcl
+> module "agent_api_key" {
+>   source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/api_key?ref=v6.19.0"
+>
+>   type = "custom"
+>   nrn  = var.nrn
+>
+>   custom_name = "AGENT"
+>   custom_role_slugs = [
+>     "controlplane:agent",
+>     "developer",
+>     "ops",
+>     "secops",
+>     "secrets-reader",
+>     "admin",
+>   ]
+> }
+> ```
+
 ---
 
 ### Installing the agent
@@ -362,8 +385,12 @@ When you move to this **agent-based strategy**, you must disable the legacy work
 
 You can do this with the nullplatform CLI:
 
+> **Which NRN?** Run this patch against the **organization-level NRN**, not an individual
+> account or application NRN — that is what disables the built-in *create application* workflow
+> platform-wide.
+
 ```bash
-np nrn patch --nrn "<<your-nrn>>" --body '{
+np nrn patch --nrn "<<your-organization-nrn>>" --body '{
    "global.workflowSkipConfig":{
       "createCodeRepository":true,
       "createImageRepository":true,
