@@ -1,0 +1,19 @@
+#!/bin/bash
+# `python3` stub: stands in for sign_app_jwt.py.
+#
+# The repository's tests deliberately need nothing but bash, curl and jq (see the
+# header of tests/run), and signing a real JWT would pull in the `cryptography`
+# package. So build_context's ORCHESTRATION is what these tests cover -- reading
+# the App credentials, minting the installation token, resolving the account --
+# while the signing itself is left to tests/smoke_github_live.
+#
+# $PYTHON_STUB_FAIL makes the signing fail, for the path that must react to it.
+
+printf 'python3\t%s\n' "$*" >> "$BB_CALLS"
+
+if [[ -n "$PYTHON_STUB_FAIL" ]]; then
+  echo "ERROR: GITHUB_PRIVATE_KEY is not a valid private key" >&2
+  exit 1
+fi
+
+echo "header.payload.signature"

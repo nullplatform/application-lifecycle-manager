@@ -1,0 +1,29 @@
+#!/bin/bash
+# Granting access is deliberately best-effort: the loop runs in a pipe subshell
+# and warns instead of aborting. A collaborator who left the organization must not
+# stop an application from being created -- access is fixable afterwards, a
+# blocked before-create hook is not.
+#
+# This pins that property, which is easy to destroy by refactoring the pipe away.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+export CODE_REPOSITORY_COLLABORATORS='[
+  {"id":"ghost","role":"push","type":"user"},
+  {"id":"jane","role":"push","type":"user"}
+]'
+
+fixture PUT "/repos/acme/my-service/collaborators/ghost" 404 '{"message":"Not Found"}'
+fixture PUT "/repos/acme/my-service/collaborators/jane" 204 ''
+
+run_code_repo_step github/add_collaborators
+
+assert_status 0 || exit 1
+assert_contains "Warning: failed to add user 'ghost'" || exit 1
+
+# The failure must not have stopped the ones after it.
+assert_called PUT "/repos/acme/my-service/collaborators/jane" || exit 1
+assert_contains "Finished adding collaborators" || exit 1

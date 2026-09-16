@@ -1,0 +1,47 @@
+#!/bin/bash
+# `gh api` reports a missing repository through its EXIT STATUS, not a body, so
+# this step reads nothing but success/failure. Both strategies have to be honored
+# in both directions, and the two failures are the ones that matter: creating over
+# an existing repository would collide, and importing one that is not there would
+# leave the application pointing nowhere.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+
+failed=0
+
+expect_strategy() {
+  local strategy="$1" code="$2" want_status="$3" want_text="$4"
+
+  rm -rf "$BB_FIXTURES"; mkdir -p "$BB_FIXTURES"
+  : > "$BB_CALLS"
+
+  export CODE_REPOSITORY_STRATEGY="$strategy"
+  fixture GET "/repos/acme/my-service" "$code" '{}'
+
+  run_code_repo_step github/validate_repository_does_not_exist
+
+  if [[ "$STEP_STATUS" != "$want_status" ]]; then
+    echo "  FAIL: strategy=$strategy repo-http=$code -> expected exit $want_status, got $STEP_STATUS"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+    return
+  fi
+
+  if [[ "$STEP_OUTPUT" != *"$want_text"* ]]; then
+    echo "  FAIL: strategy=$strategy repo-http=$code -> expected '$want_text' in:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+#               strategy  repo exists?      exit  message
+expect_strategy create    200          1     "Repository already exists"
+expect_strategy create    404          0     "Repository does not exist and strategy is set to 'create'"
+expect_strategy import    200          0     "Repository found and strategy is set to 'import'"
+expect_strategy import    404          1     "Repository does not exist but strategy is set to 'import'"
+
+exit "$failed"

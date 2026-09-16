@@ -1,0 +1,19 @@
+#!/bin/bash
+# A failed generate must stop the workflow. It runs inside a before-create hook,
+# so carrying on would add collaborators and secrets to a repository that is not
+# there, and close the hook reporting success.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+export TEMPLATE_URL="https://github.com/acme/tpl"
+
+fixture POST "/repos/acme/tpl/generate" 422 '{"message":"Repository already exists"}'
+
+run_code_repo_step github/create_repository
+
+assert_status 1 || exit 1
+assert_contains "Error creating repository from template" || exit 1

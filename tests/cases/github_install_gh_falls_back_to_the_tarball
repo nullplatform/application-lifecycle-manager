@@ -1,0 +1,90 @@
+#!/bin/bash
+# mise is the documented way this repo gets `gh`, and it is broken on the
+# nullplatform agent image: its GitHub-attestation check fails with an HTTP error
+# even though the download itself works and the host has egress. Every GitHub
+# installation hits it on the first application it creates.
+#
+# So a failed mise is not fatal: the release tarball is fetched directly.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# A PATH we fully control: the runner's own `gh` (GitHub Actions ships one) would
+# otherwise make the install branch unreachable and the test vacuous.
+#
+# gzip earns its place here: GNU tar shells out to it for -z, while the bsdtar on
+# macOS decompresses in-process. Leaving it out passes locally and fails only on
+# a linux runner, so the list is checked rather than trusted.
+mkdir -p "$TEST_TMP/bin" "$TEST_TMP/dest"
+missing=""
+for t in tar gzip gunzip uname tr mkdir cp rm chmod mktemp dirname cat sed grep jq install sh; do
+  if p=$(command -v "$t" 2>/dev/null); then
+    ln -sf "$p" "$TEST_TMP/bin/$t"
+  else
+    missing="$missing $t"
+  fi
+done
+
+if [[ -n "$missing" ]]; then
+  echo "  FAIL: this host is missing tools the curated PATH needs:$missing"
+  exit 1
+fi
+
+# mise is present but cannot install anything, exactly like the agent image.
+cat > "$TEST_TMP/bin/mise" <<'STUB'
+#!/bin/bash
+printf 'mise\t%s\n' "$*" >> "$BB_CALLS"
+echo "mise ERROR GitHub attestations verification failed" >&2
+exit 1
+STUB
+chmod +x "$TEST_TMP/bin/mise"
+
+# A release tarball shaped the way GitHub serves one, for THIS platform: the
+# step derives the package name from uname, so hardcoding linux/amd64 would only
+# pass on a linux/amd64 runner.
+GH_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+case "$(uname -m)" in
+  x86_64|amd64)  GH_ARCH="amd64" ;;
+  aarch64|arm64) GH_ARCH="arm64" ;;
+  *)             GH_ARCH="unsupported" ;;
+esac
+PKG="gh_2.101.0_${GH_OS}_${GH_ARCH}"
+
+mkdir -p "$TEST_TMP/src/$PKG/bin"
+printf '#!/bin/bash\necho "gh version 2.101.0"\n' > "$TEST_TMP/src/$PKG/bin/gh"
+chmod +x "$TEST_TMP/src/$PKG/bin/gh"
+tar czf "$TEST_TMP/release.tgz" -C "$TEST_TMP/src" "$PKG"
+
+cat > "$TEST_TMP/bin/curl" <<STUB
+#!/bin/bash
+printf 'curl\t%s\n' "\$*" >> "\$BB_CALLS"
+out=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in -o) out="\$2"; shift 2 ;; *) shift ;; esac
+done
+[[ -n "\$out" ]] && cp "$TEST_TMP/release.tgz" "\$out"
+exit 0
+STUB
+chmod +x "$TEST_TMP/bin/curl"
+
+export PATH="$TEST_TMP/bin"
+export GH_CLI_VERSION="2.101.0"
+export GH_INSTALL_DIR="$TEST_TMP/dest"
+
+if command -v gh >/dev/null 2>&1; then
+  echo "  FAIL: the test PATH still exposes a gh; the install branch would never run"
+  exit 1
+fi
+
+run_code_repo_step github/install_gh
+assert_status 0 || exit 1
+
+# run_code_repo_step sources the step inside a command substitution, so its PATH
+# export cannot be observed from here. The durable effect is the binary itself.
+if [[ ! -x "$TEST_TMP/dest/gh" ]]; then
+  echo "  FAIL: gh was not installed into GH_INSTALL_DIR after the fallback"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+  exit 1
+fi
+
+assert_contains "mise" || exit 1

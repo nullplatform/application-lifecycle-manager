@@ -30,19 +30,10 @@ for var in GITHUB_INSTALLATION_ID GITHUB_ACCOUNT; do
   fi
 done
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "gh CLI not found, installing via mise"
-  if ! mise use -g gh@latest; then
-    echo "ERROR: failed to install gh via mise"
-    exit 1
-  fi
-  export PATH="$HOME/.local/share/mise/shims:$PATH"
-fi
-
-if ! command -v gh >/dev/null 2>&1; then
-  echo "ERROR: gh CLI is still not available after install"
-  exit 1
-fi
+# mise first, release tarball if that fails. See the header of install_gh for why
+# the fallback exists.
+# shellcheck source=scripts/code-repo/github/install_gh
+source "$CURRENT_DIR/install_gh"
 
 # The JWT is built with python3 because the agent image ships no openssl binary, and openssl is
 # available neither through mise nor through the image's apk index.

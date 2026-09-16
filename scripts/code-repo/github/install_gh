@@ -1,0 +1,97 @@
+#!/bin/bash
+#
+# Puts the `gh` CLI on PATH, by whichever route works.
+#
+# mise is the documented route and the one the agent image expects, but it is not
+# reliable: on the nullplatform agent image its GitHub-attestation check fails
+# with `HTTP error: error decoding response body` even though the download
+# succeeds, the host has egress and the API rate limit is untouched. Every GitHub
+# installation hits that on the first application it creates, so a failed mise
+# falls through to the release tarball rather than ending the workflow.
+#
+# Sourced, like every step here: `return` to continue, `exit 1` to stop the
+# workflow. The PATH export only reaches the caller because this file is sourced.
+#
+# Overrides, both for tests and for hosts that cannot reach the network the usual
+# way: GH_CLI_VERSION pins the version (default: whatever /releases/latest points
+# at), GH_INSTALL_DIR chooses where the binary lands (default: ~/.local/bin,
+# writable without root).
+
+if command -v gh >/dev/null 2>&1; then
+  return 0
+fi
+
+echo "gh CLI not found, installing via mise"
+
+if mise use -g gh@latest; then
+  export PATH="$HOME/.local/share/mise/shims:$PATH"
+
+  if command -v gh >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "mise reported success but gh is still not on PATH; falling back to the release tarball"
+else
+  echo "mise could not install gh; falling back to the release tarball"
+fi
+
+GH_INSTALL_DIR="${GH_INSTALL_DIR:-$HOME/.local/bin}"
+
+case "$(uname -m)" in
+  x86_64|amd64)  GH_ARCH="amd64" ;;
+  aarch64|arm64) GH_ARCH="arm64" ;;
+  *)
+    echo "ERROR: cannot install gh automatically for architecture '$(uname -m)'. Install it into the image, or set GH_INSTALL_DIR to a directory that already holds it."
+    exit 1
+    ;;
+esac
+
+GH_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+if [[ -z "${GH_CLI_VERSION:-}" ]]; then
+  # The redirect carries the tag, so resolving the latest version costs no API
+  # call and no rate limit -- which matters, because the limit is 60/hour per IP
+  # and a cluster shares one.
+  GH_CLI_VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/cli/cli/releases/latest" 2>/dev/null | sed 's#.*/tag/v##')
+
+  if [[ -z "$GH_CLI_VERSION" ]]; then
+    echo "ERROR: could not resolve the latest gh release. Set GH_CLI_VERSION to pin one."
+    exit 1
+  fi
+fi
+
+GH_PKG="gh_${GH_CLI_VERSION}_${GH_OS}_${GH_ARCH}"
+GH_TMP=$(mktemp -d)
+
+if ! curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${GH_PKG}.tar.gz" -o "$GH_TMP/gh.tar.gz"; then
+  echo "ERROR: could not download ${GH_PKG}.tar.gz from the gh releases."
+  rm -rf "$GH_TMP"
+  exit 1
+fi
+
+if ! tar xzf "$GH_TMP/gh.tar.gz" -C "$GH_TMP"; then
+  echo "ERROR: the gh release tarball could not be extracted."
+  rm -rf "$GH_TMP"
+  exit 1
+fi
+
+mkdir -p "$GH_INSTALL_DIR"
+
+if ! cp "$GH_TMP/$GH_PKG/bin/gh" "$GH_INSTALL_DIR/gh"; then
+  echo "ERROR: could not install gh into $GH_INSTALL_DIR."
+  rm -rf "$GH_TMP"
+  exit 1
+fi
+
+chmod 0755 "$GH_INSTALL_DIR/gh"
+rm -rf "$GH_TMP"
+
+export PATH="$GH_INSTALL_DIR:$PATH"
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh was installed into $GH_INSTALL_DIR but is still not on PATH."
+  exit 1
+fi
+
+echo "Installed gh ${GH_CLI_VERSION} from the release tarball into $GH_INSTALL_DIR"

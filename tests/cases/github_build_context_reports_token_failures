@@ -1,0 +1,47 @@
+#!/bin/bash
+# Two ways to end up without a usable token, and both must stop the workflow
+# here. Carrying on with an empty GH_TOKEN makes every later gh call fail with an
+# authentication error, which reads like a permissions problem on the App rather
+# than what it is.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+TOKEN_URL="https://api.github.com/app/installations/999/access_tokens"
+
+export GITHUB_APP_ID="123"
+export GITHUB_PRIVATE_KEY="pem"
+export GITHUB_INSTALLATION_ID="999"
+export GITHUB_ACCOUNT="acme"
+
+failed=0
+
+# GitHub refused the JWT: the response carries a message and no token. The
+# response has to reach the log -- it is the only thing that says why.
+fixture POST "$TOKEN_URL" 401 '{"message":"Bad credentials"}'
+
+run_code_repo_step github/build_context
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: a refused token request should exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"could not obtain a GitHub App installation token"* || "$STEP_OUTPUT" != *"Bad credentials"* ]]; then
+  echo "  FAIL: the refusal was not explained in:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+# The private key could not be signed with at all.
+export PYTHON_STUB_FAIL=1
+run_code_repo_step github/build_context
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: a failed JWT signature should exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"failed to build the GitHub App JWT"* ]]; then
+  echo "  FAIL: the signing failure was not reported in:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"

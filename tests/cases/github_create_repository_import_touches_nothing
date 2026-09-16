@@ -1,0 +1,23 @@
+#!/bin/bash
+# On the import path the repository already exists and belongs to someone else's
+# history. The step must return before it calls GitHub at all -- generating from a
+# template over an existing repository is not something to get half right.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="import"
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+export TEMPLATE_URL="https://github.com/acme/tpl"
+
+run_code_repo_step github/create_repository
+
+assert_status 0 || exit 1
+assert_contains "Skipping repo creation" || exit 1
+
+if grep -q "^gh" "$BB_CALLS"; then
+  echo "  FAIL: the import path called gh. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

@@ -163,6 +163,37 @@ absent, read from the code repository configured in nullplatform — the same pr
 provider uses. Setting them in the environment overrides the platform values. The App credentials
 (`GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`) must always come from the environment.
 
+**Installing `gh`.** The agent host needs the `gh` CLI. When it is absent, `install_gh` tries `mise`
+first and falls back to fetching the release tarball into `GH_INSTALL_DIR` (default `~/.local/bin`).
+The fallback exists because mise's GitHub-attestation check fails on the nullplatform agent image
+even when the download succeeds and the host has egress, which every GitHub installation would
+otherwise hit on the first application it creates. `GH_CLI_VERSION` pins a version; without it the
+latest release is resolved from the `/releases/latest` redirect, which costs no API rate limit.
+Baking `gh` into the image skips all of this — the step notices it and does nothing.
+
+**Keeping the private key out of the environment (optional).** Of the three values above only
+`GITHUB_PRIVATE_KEY` is really secret, and in the agent's environment it travels through the
+terraform state, the Helm values and every `kubectl describe`; rotating it means an apply and a pod
+restart, which also freezes any application being created at that moment. Set `GITHUB_APP_SECRET_ID`
+and the credentials are read at run time from a secrets store instead:
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_SECRET_ID` | The secret to read. `${GITHUB_ACCOUNT}` in it is replaced by the organization, so one agent can serve several GitHub orgs — adding one is a new secret, not a new deployment. |
+| `GITHUB_APP_SECRET_STORE` | `aws` (default), the only store implemented today. |
+
+The secret holds a JSON object whose keys are all optional, and each one only fills a value the
+environment did not already provide — so the private key can live in the store while the installation
+id keeps coming from the nullplatform provider:
+
+```json
+{ "app_id": "4966079", "installation_id": "162217903", "private_key": "-----BEGIN RSA PRIVATE KEY-----\n..." }
+```
+
+On AWS the agent reads it with its own IAM identity, so the role needs `secretsmanager:GetSecretValue`
+on those secrets and the read shows up in CloudTrail. Without `GITHUB_APP_SECRET_ID` nothing changes:
+the credentials come from the environment as before.
+
 **Why a GitHub App (not a PAT):** the App is owned by the organization, is not tied to a
 person, and needs no manual token rotation — an installation token is minted per run and
 expires on its own. Install the App on your org and grant it repository **administration**,

@@ -67,24 +67,30 @@ fixture_seq() {
   printf '%s' "$body" > "$BB_FIXTURES/${key}.${n}.body"
 }
 
+# The locals below are named __lib_* on purpose. These helpers SOURCE the script
+# under test, and bash scopes dynamically: a plain `local var` is visible to the
+# sourced script, so a step that loops with `for var in ...` -- github/build_context
+# does exactly that -- overwrites it, and `${!var}` then reads the wrong variable.
+# It does not fail, it returns a plausible wrong answer.
+
 # run_step NAME -> STEP_OUTPUT, STEP_STATUS
 run_step() {
-  local step="$1"
+  local __lib_step="$1"
 
   # shellcheck disable=SC1090
-  STEP_OUTPUT=$(cd "$REPO_ROOT" && source "scripts/code-repo/bitbucket/$step" 2>&1)
+  STEP_OUTPUT=$(cd "$REPO_ROOT" && source "scripts/code-repo/bitbucket/$__lib_step" 2>&1)
   STEP_STATUS=$?
 }
 
 # capture_export NAME VAR -> the value the step exported into VAR
 capture_export() {
-  local step="$1" var="$2"
+  local __lib_step="$1" __lib_var="$2"
 
   (
     cd "$REPO_ROOT" || exit 1
     # shellcheck disable=SC1090
-    source "scripts/code-repo/bitbucket/$step" >/dev/null 2>&1
-    printf '%s' "${!var}"
+    source "scripts/code-repo/bitbucket/$__lib_step" >/dev/null 2>&1
+    printf '%s' "${!__lib_var}"
   )
 }
 
@@ -148,4 +154,37 @@ assert_called_git() {
     sed 's/^/    /' "$BB_CALLS"
     return 1
   fi
+}
+# The helpers above are bound to scripts/code-repo/bitbucket. These two are the
+# provider-agnostic equivalents, for the steps that live directly under
+# scripts/code-repo (resolve_repository_name, generate_secrets, ...).
+
+# run_script_step PATH -> STEP_OUTPUT, STEP_STATUS -- PATH is relative to scripts/
+run_script_step() {
+  local __lib_step="$1"
+
+  # shellcheck disable=SC1090
+  STEP_OUTPUT=$(cd "$REPO_ROOT" && source "scripts/$__lib_step" 2>&1)
+  STEP_STATUS=$?
+}
+
+# run_code_repo_step NAME -> STEP_OUTPUT, STEP_STATUS
+run_code_repo_step() {
+  local __lib_step="$1"
+
+  # shellcheck disable=SC1090
+  STEP_OUTPUT=$(cd "$REPO_ROOT" && source "scripts/code-repo/$__lib_step" 2>&1)
+  STEP_STATUS=$?
+}
+
+# capture_code_repo_export NAME VAR -> the value the step exported into VAR
+capture_code_repo_export() {
+  local __lib_step="$1" __lib_var="$2"
+
+  (
+    cd "$REPO_ROOT" || exit 1
+    # shellcheck disable=SC1090
+    source "scripts/code-repo/$__lib_step" >/dev/null 2>&1
+    printf '%s' "${!__lib_var}"
+  )
 }

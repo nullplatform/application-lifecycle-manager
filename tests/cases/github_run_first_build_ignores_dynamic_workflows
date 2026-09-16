@@ -1,0 +1,25 @@
+#!/bin/bash
+# Workflows under dynamic/ are generated, not authored, and re-running them is not
+# what "trigger the first build" means. With nothing else present the step has to
+# return quietly -- a repository whose template ships no CI is a valid outcome,
+# not a failure that should block the application.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+
+fixture GET "/repos/acme/my-service/actions/workflows" 200 \
+  '{"workflows":[{"id":1,"path":"dynamic/generated.yml"}]}'
+
+run_code_repo_step github/run_first_build
+
+assert_status 0 || exit 1
+assert_contains "No workflows found" || exit 1
+
+if grep -q "runs" "$BB_CALLS"; then
+  echo "  FAIL: it went looking for runs of a dynamic workflow. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

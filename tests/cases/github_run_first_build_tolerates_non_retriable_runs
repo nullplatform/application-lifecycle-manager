@@ -1,0 +1,40 @@
+#!/bin/bash
+# GitHub refuses to re-run some runs at all -- a run whose logs have expired, for
+# instance. That refusal is not a reason to fail application creation, so it is
+# recognised by its message and skipped. Any OTHER refusal still stops the step.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+
+fixture GET "/repos/acme/my-service/actions/workflows" 200 \
+  '{"workflows":[{"id":7,"path":".github/workflows/ci.yml"}]}'
+
+fixture GET "/repos/acme/my-service/actions/workflows/7/runs" 200 \
+  '{"workflow_runs":[{"id":42,"status":"completed","conclusion":"failure"}]}'
+
+fixture POST "/repos/acme/my-service/actions/runs/42/rerun" 403 \
+  '{"message":"This workflow run cannot be retried."}'
+
+run_code_repo_step github/run_first_build
+
+assert_status 0 || exit 1
+assert_contains "Skipping non-retriable workflow run 42" || exit 1
+
+# A refusal that is NOT the non-retriable one must stop the step instead.
+rm -rf "$BB_FIXTURES"; mkdir -p "$BB_FIXTURES"
+: > "$BB_CALLS"
+
+fixture GET "/repos/acme/my-service/actions/workflows" 200 \
+  '{"workflows":[{"id":7,"path":".github/workflows/ci.yml"}]}'
+fixture GET "/repos/acme/my-service/actions/workflows/7/runs" 200 \
+  '{"workflow_runs":[{"id":42,"status":"completed","conclusion":"failure"}]}'
+fixture POST "/repos/acme/my-service/actions/runs/42/rerun" 500 \
+  '{"message":"Internal server error"}'
+
+run_code_repo_step github/run_first_build
+
+assert_status 1 || exit 1
+assert_contains "ERROR: failed to re-run workflow run 42" || exit 1

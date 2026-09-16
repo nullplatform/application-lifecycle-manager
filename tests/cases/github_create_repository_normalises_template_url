@@ -1,0 +1,74 @@
+#!/bin/bash
+# The template URL is stored by hand in a nullplatform Template, so it arrives in
+# whatever shape someone pasted. It is parsed with sed rather than a URL library,
+# which makes the accepted shapes worth pinning.
+#
+# The guard that matters is the last one: a URL that is not on github.com leaves
+# the repository segment empty and must fail, instead of asking GitHub to
+# generate from a repository named after a URL fragment.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+
+failed=0
+
+expect_template() {
+  local url="$1" want_owner="$2" want_repo="$3"
+
+  rm -rf "$BB_FIXTURES"; mkdir -p "$BB_FIXTURES"
+  : > "$BB_CALLS"
+
+  export TEMPLATE_URL="$url"
+  fixture POST "/repos/$want_owner/$want_repo/generate" 201 '{}'
+
+  run_code_repo_step github/create_repository
+
+  if [[ "$STEP_STATUS" != 0 ]]; then
+    echo "  FAIL: '$url' should resolve to $want_owner/$want_repo but exited $STEP_STATUS"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+    return
+  fi
+
+  if ! grep -qF "/repos/$want_owner/$want_repo/generate" "$BB_CALLS"; then
+    echo "  FAIL: '$url' did not call generate on $want_owner/$want_repo. Calls:"
+    sed 's/^/        /' "$BB_CALLS"
+    failed=1
+  fi
+}
+
+expect_rejected() {
+  local url="$1"
+
+  rm -rf "$BB_FIXTURES"; mkdir -p "$BB_FIXTURES"
+  : > "$BB_CALLS"
+
+  export TEMPLATE_URL="$url"
+  run_code_repo_step github/create_repository
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL: '${url:-(empty)}' should have been rejected, exited $STEP_STATUS"
+    failed=1
+    return
+  fi
+
+  if [[ "$STEP_OUTPUT" != *"invalid template repository URL"* ]]; then
+    echo "  FAIL: '${url:-(empty)}' was rejected without naming the reason:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+expect_template "https://github.com/acme/tpl"      acme tpl
+expect_template "https://github.com/acme/tpl.git"  acme tpl
+expect_template "https://github.com/acme/tpl/"     acme tpl
+expect_template "http://github.com/acme/tpl"       acme tpl
+
+expect_rejected "https://gitlab.com/acme/tpl"
+expect_rejected ""
+
+exit "$failed"

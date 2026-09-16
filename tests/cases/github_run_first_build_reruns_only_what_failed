@@ -1,0 +1,33 @@
+#!/bin/bash
+# The template's own initial commit may already have started a run. A finished run
+# that did not succeed is re-run; one that succeeded is left alone, because
+# re-running it would replace a green build with a second, identical one.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+
+fixture GET "/repos/acme/my-service/actions/workflows" 200 \
+  '{"workflows":[{"id":7,"path":".github/workflows/ci.yml"}]}'
+
+fixture GET "/repos/acme/my-service/actions/workflows/7/runs" 200 \
+  '{"workflow_runs":[
+     {"id":41,"status":"completed","conclusion":"success"},
+     {"id":42,"status":"completed","conclusion":"failure"}
+   ]}'
+
+fixture POST "/repos/acme/my-service/actions/runs/42/rerun" 201 ''
+
+run_code_repo_step github/run_first_build
+
+assert_status 0 || exit 1
+assert_called POST "/repos/acme/my-service/actions/runs/42/rerun" || exit 1
+assert_contains "Re-ran workflow run 42" || exit 1
+
+if grep -qF "/repos/acme/my-service/actions/runs/41/rerun" "$BB_CALLS"; then
+  echo "  FAIL: the successful run 41 was re-run too. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

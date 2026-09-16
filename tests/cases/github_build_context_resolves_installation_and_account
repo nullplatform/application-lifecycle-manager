@@ -1,0 +1,57 @@
+#!/bin/bash
+# installation_id and the organization may live on the provider record in
+# nullplatform or in the agent's environment. The environment wins, the platform
+# is the fallback, and having neither is an error that names the variable.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+TOKEN_URL_PLATFORM="https://api.github.com/app/installations/999/access_tokens"
+TOKEN_URL_ENV="https://api.github.com/app/installations/111/access_tokens"
+
+export GITHUB_APP_ID="123"
+export GITHUB_PRIVATE_KEY="pem"
+export CODE_REPOSITORY='{"attributes":{"setup":{"installation_id":"999","organization":"platform-org"}}}'
+
+fixture POST "$TOKEN_URL_PLATFORM" 201 '{"token":"ghs_frommplatform"}'
+fixture POST "$TOKEN_URL_ENV" 201 '{"token":"ghs_fromenv"}'
+
+failed=0
+
+# Fallback: nothing in the environment, so both come off the provider record.
+unset GITHUB_INSTALLATION_ID GITHUB_ACCOUNT
+account=$(capture_code_repo_export github/build_context GITHUB_ACCOUNT)
+token=$(capture_code_repo_export github/build_context GH_TOKEN)
+
+if [[ "$account" != "platform-org" || "$token" != "ghs_frommplatform" ]]; then
+  echo "  FAIL: expected the platform values (platform-org / ghs_frommplatform), got '$account' / '$token'"
+  failed=1
+fi
+
+# Override: the environment wins over the provider record.
+export GITHUB_INSTALLATION_ID="111"
+export GITHUB_ACCOUNT="env-org"
+account=$(capture_code_repo_export github/build_context GITHUB_ACCOUNT)
+token=$(capture_code_repo_export github/build_context GH_TOKEN)
+
+if [[ "$account" != "env-org" || "$token" != "ghs_fromenv" ]]; then
+  echo "  FAIL: expected the environment to win (env-org / ghs_fromenv), got '$account' / '$token'"
+  failed=1
+fi
+
+# Neither: the provider record carries nothing and the environment is empty.
+unset GITHUB_INSTALLATION_ID GITHUB_ACCOUNT
+export CODE_REPOSITORY='{"attributes":{"setup":{}}}'
+
+run_code_repo_step github/build_context
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: with nothing to resolve from, expected exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"GITHUB_INSTALLATION_ID is not set"* ]]; then
+  echo "  FAIL: the unresolvable variable was not named in:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"
