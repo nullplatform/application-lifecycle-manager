@@ -38,9 +38,3 @@ variable "bitbucket_collaborators" {
     error_message = "A collaborator type is either user or group."
   }
 }
-
-variable "dimensions" {
-  description = "Dimensions to segment the configuration by (e.g. environment). The specification does not allow dimensions, so leave this empty unless you know otherwise."
-  type        = map(string)
-  default     = {}
-}
