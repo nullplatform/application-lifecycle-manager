@@ -188,3 +188,98 @@ capture_code_repo_export() {
     printf '%s' "${!__lib_var}"
   )
 }
+
+# gh_install_sandbox -- a PATH we fully control, for the install_gh cases.
+#
+# Two reasons it is this elaborate. The runner's own gh (GitHub Actions ships one)
+# would make the install branch unreachable and the cases vacuous. And the
+# fallback only supports Linux, so `uname` is faked: without it these cases would
+# pass on CI and fail on a developer's macOS, which is the wrong way round for a
+# path that only ever runs on Linux.
+#
+# Leaves behind: $GH_SANDBOX_BIN (the curated PATH), $GH_SANDBOX_DEST (where gh is
+# installed), $GH_SANDBOX_PKG (the package name the fake release serves) and
+# $GH_SANDBOX_SUM (its real checksum). mise fails, as it does on the agent image.
+gh_install_sandbox() {
+  GH_SANDBOX_BIN="$TEST_TMP/gh-bin"
+  GH_SANDBOX_DEST="$TEST_TMP/gh-dest"
+  mkdir -p "$GH_SANDBOX_BIN" "$GH_SANDBOX_DEST"
+
+  local missing="" t p
+  for t in tar gzip gunzip tr mkdir cp rm chmod mktemp dirname cat sed grep awk cut jq install sh; do
+    if p=$(command -v "$t" 2>/dev/null); then
+      ln -sf "$p" "$GH_SANDBOX_BIN/$t"
+    else
+      missing="$missing $t"
+    fi
+  done
+
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    missing="$missing sha256sum-or-shasum"
+  fi
+  command -v sha256sum >/dev/null 2>&1 && ln -sf "$(command -v sha256sum)" "$GH_SANDBOX_BIN/sha256sum"
+  command -v shasum    >/dev/null 2>&1 && ln -sf "$(command -v shasum)"    "$GH_SANDBOX_BIN/shasum"
+
+  if [[ -n "$missing" ]]; then
+    echo "  FAIL: this host is missing tools the sandbox needs:$missing"
+    return 1
+  fi
+
+  local arch
+  case "$(uname -m)" in
+    x86_64|amd64)  arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *)             arch="amd64" ;;
+  esac
+
+  # Linux, whatever the host really is.
+  # Single quotes on purpose: $1 belongs to the generated stub, not to us.
+  # shellcheck disable=SC2016
+  printf '#!/bin/bash\ncase "$1" in -s) echo Linux ;; -m) echo %s ;; *) echo Linux ;; esac\n' \
+    "$( [[ "$arch" == "amd64" ]] && echo x86_64 || echo aarch64 )" > "$GH_SANDBOX_BIN/uname"
+  chmod +x "$GH_SANDBOX_BIN/uname"
+
+  # mise present and broken, exactly like the agent image.
+  cat > "$GH_SANDBOX_BIN/mise" <<'MISE'
+#!/bin/bash
+echo "mise ERROR GitHub attestations verification failed" >&2
+exit 1
+MISE
+  chmod +x "$GH_SANDBOX_BIN/mise"
+
+  GH_SANDBOX_PKG="gh_2.101.0_linux_${arch}"
+
+  mkdir -p "$TEST_TMP/gh-src/$GH_SANDBOX_PKG/bin"
+  printf '#!/bin/bash\necho "gh version 2.101.0"\n' > "$TEST_TMP/gh-src/$GH_SANDBOX_PKG/bin/gh"
+  chmod +x "$TEST_TMP/gh-src/$GH_SANDBOX_PKG/bin/gh"
+  tar czf "$TEST_TMP/gh-release.tgz" -C "$TEST_TMP/gh-src" "$GH_SANDBOX_PKG"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    GH_SANDBOX_SUM=$(sha256sum "$TEST_TMP/gh-release.tgz" | cut -d' ' -f1)
+  else
+    GH_SANDBOX_SUM=$(shasum -a 256 "$TEST_TMP/gh-release.tgz" | cut -d' ' -f1)
+  fi
+
+  # Serves the tarball and the checksums file. $GH_SANDBOX_BAD_SUM corrupts the
+  # published checksum; $GH_SANDBOX_CURL_FAIL makes every request fail while still
+  # printing the url, the way real curl does with -w '%{url_effective}'.
+  cat > "$GH_SANDBOX_BIN/curl" <<CURL
+#!/bin/bash
+out=""; url=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in -o) out="\$2"; shift 2 ;; -*) shift ;; *) url="\$1"; shift ;; esac
+done
+if [[ -n "\$GH_SANDBOX_CURL_FAIL" ]]; then printf '%s' "\$url"; exit 6; fi
+if [[ "\$url" == *checksums.txt ]]; then
+  printf '%s  %s\n' "\${GH_SANDBOX_BAD_SUM:-$GH_SANDBOX_SUM}" "$GH_SANDBOX_PKG.tar.gz" > "\$out"
+else
+  cp "$TEST_TMP/gh-release.tgz" "\$out"
+fi
+exit 0
+CURL
+  chmod +x "$GH_SANDBOX_BIN/curl"
+
+  export PATH="$GH_SANDBOX_BIN"
+  export GH_CLI_VERSION="2.101.0"
+  export GH_INSTALL_DIR="$GH_SANDBOX_DEST"
+}

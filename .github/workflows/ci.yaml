@@ -33,7 +33,11 @@ jobs:
             entrypoint \
             scripts/code-repo/create_code_repository \
             scripts/code-repo/generate_secrets \
+            scripts/base_context \
+            $(find scripts/code-repo/gitlab -maxdepth 1 -type f) \
             scripts/asset-repo/create_asset_repository \
+            scripts/asset-repo/docker-server/build_context \
+            scripts/asset-repo/docker-server/create_repository \
             scripts/workflow_skip \
             tests/run \
             tests/lib.sh \

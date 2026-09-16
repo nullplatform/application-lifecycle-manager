@@ -9,15 +9,26 @@
 # installation hits that on the first application it creates, so a failed mise
 # falls through to the release tarball rather than ending the workflow.
 #
+# The fallback verifies the download against the checksums GitHub publishes with
+# every release. Skipping that would answer a broken integrity check by removing
+# integrity checking, for a binary that then acts with administration rights over
+# the organization's repositories.
+#
 # Sourced, like every step here: `return` to continue, `exit 1` to stop the
 # workflow. The PATH export only reaches the caller because this file is sourced.
 #
-# Overrides, both for tests and for hosts that cannot reach the network the usual
-# way: GH_CLI_VERSION pins the version (default: whatever /releases/latest points
-# at), GH_INSTALL_DIR chooses where the binary lands (default: ~/.local/bin,
-# writable without root).
+# Overrides: GH_CLI_VERSION pins the version (default: whatever /releases/latest
+# redirects to), GH_INSTALL_DIR chooses where the binary lands (default:
+# ~/.local/bin, writable without root).
 
-if command -v gh >/dev/null 2>&1; then
+# `command -v` answers "is there a file with that name on PATH", not "can I run
+# it". A failed chmod leaves a file that satisfies the first and not the second,
+# so the check is to actually run it.
+gh_is_usable() {
+  command -v gh >/dev/null 2>&1 && gh --version >/dev/null 2>&1
+}
+
+if gh_is_usable; then
   return 0
 fi
 
@@ -26,72 +37,123 @@ echo "gh CLI not found, installing via mise"
 if mise use -g gh@latest; then
   export PATH="$HOME/.local/share/mise/shims:$PATH"
 
-  if command -v gh >/dev/null 2>&1; then
+  if gh_is_usable; then
     return 0
   fi
 
-  echo "mise reported success but gh is still not on PATH; falling back to the release tarball"
+  echo "mise reported success but gh is not usable; falling back to the release tarball"
 else
   echo "mise could not install gh; falling back to the release tarball"
 fi
 
 GH_INSTALL_DIR="${GH_INSTALL_DIR:-$HOME/.local/bin}"
 
+# One place to fail from, so the temporary directory is removed on every path.
+# Not a `trap ... EXIT`: this file is SOURCED, so that trap would belong to the
+# workflow's shell and fire long after this step returned.
+gh_install_failed() {
+  echo "ERROR: $1"
+  [[ -n "${GH_TMP:-}" ]] && rm -rf "$GH_TMP"
+  exit 1
+}
+
+# gh publishes Linux builds as gh_<ver>_linux_<arch>.tar.gz and macOS ones as
+# gh_<ver>_macOS_<arch>.zip -- a different name AND a different archive format.
+# An explicit branch says so, instead of 404ing on a URL that was never going to
+# exist.
+GH_UNAME_S=$(uname -s)
+
+if [[ "$GH_UNAME_S" != "Linux" ]]; then
+  gh_install_failed "the release-tarball fallback only supports Linux, and this host reports '$GH_UNAME_S'. Install gh into the image, or point GH_INSTALL_DIR at a directory that already holds it."
+fi
+
 case "$(uname -m)" in
   x86_64|amd64)  GH_ARCH="amd64" ;;
   aarch64|arm64) GH_ARCH="arm64" ;;
-  *)
-    echo "ERROR: cannot install gh automatically for architecture '$(uname -m)'. Install it into the image, or set GH_INSTALL_DIR to a directory that already holds it."
-    exit 1
-    ;;
+  *) gh_install_failed "cannot install gh automatically for architecture '$(uname -m)'. Install it into the image, or point GH_INSTALL_DIR at a directory that already holds it." ;;
 esac
-
-GH_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 
 if [[ -z "${GH_CLI_VERSION:-}" ]]; then
   # The redirect carries the tag, so resolving the latest version costs no API
   # call and no rate limit -- which matters, because the limit is 60/hour per IP
   # and a cluster shares one.
-  GH_CLI_VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
-    "https://github.com/cli/cli/releases/latest" 2>/dev/null | sed 's#.*/tag/v##')
+  #
+  # Both checks are needed. `-w '%{url_effective}'` prints the URL it was GIVEN
+  # even when the request fails, so a DNS or TLS error still writes a plausible
+  # string to stdout; and a 200 from somewhere unexpected would leave a URL with
+  # no /tag/v in it. Without the second check the whole URL became the version.
+  if ! GH_LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/cli/cli/releases/latest" 2>/dev/null); then
+    gh_install_failed "could not reach the gh releases to resolve the latest version. Set GH_CLI_VERSION to pin one."
+  fi
 
-  if [[ -z "$GH_CLI_VERSION" ]]; then
-    echo "ERROR: could not resolve the latest gh release. Set GH_CLI_VERSION to pin one."
-    exit 1
+  GH_CLI_VERSION="${GH_LATEST_URL##*/tag/v}"
+
+  if [[ -z "$GH_CLI_VERSION" || "$GH_CLI_VERSION" == "$GH_LATEST_URL" ]]; then
+    gh_install_failed "could not read a version out of '$GH_LATEST_URL'. Set GH_CLI_VERSION to pin one."
   fi
 fi
 
-GH_PKG="gh_${GH_CLI_VERSION}_${GH_OS}_${GH_ARCH}"
-GH_TMP=$(mktemp -d)
+GH_PKG="gh_${GH_CLI_VERSION}_linux_${GH_ARCH}"
+GH_BASE_URL="https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}"
 
-if ! curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${GH_PKG}.tar.gz" -o "$GH_TMP/gh.tar.gz"; then
-  echo "ERROR: could not download ${GH_PKG}.tar.gz from the gh releases."
-  rm -rf "$GH_TMP"
-  exit 1
+if ! GH_TMP=$(mktemp -d); then
+  gh_install_failed "could not create a temporary directory to download gh into."
+fi
+
+if ! curl -fsSL "${GH_BASE_URL}/${GH_PKG}.tar.gz" -o "$GH_TMP/gh.tar.gz"; then
+  gh_install_failed "could not download ${GH_PKG}.tar.gz from the gh releases."
+fi
+
+if ! curl -fsSL "${GH_BASE_URL}/gh_${GH_CLI_VERSION}_checksums.txt" -o "$GH_TMP/checksums.txt"; then
+  gh_install_failed "could not download the checksums for gh ${GH_CLI_VERSION}. The download cannot be verified, so it is not installed."
+fi
+
+gh_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    return 1
+  fi
+}
+
+GH_EXPECTED_SUM=$(awk -v pkg="${GH_PKG}.tar.gz" '$2 == pkg { print $1 }' "$GH_TMP/checksums.txt")
+
+if [[ -z "$GH_EXPECTED_SUM" ]]; then
+  gh_install_failed "the checksums file for gh ${GH_CLI_VERSION} has no entry for ${GH_PKG}.tar.gz."
+fi
+
+if ! GH_ACTUAL_SUM=$(gh_sha256 "$GH_TMP/gh.tar.gz") || [[ -z "$GH_ACTUAL_SUM" ]]; then
+  gh_install_failed "no sha256 tool on this host (sha256sum or shasum), so the download cannot be verified."
+fi
+
+if [[ "$GH_ACTUAL_SUM" != "$GH_EXPECTED_SUM" ]]; then
+  gh_install_failed "checksum mismatch for ${GH_PKG}.tar.gz: expected $GH_EXPECTED_SUM, got $GH_ACTUAL_SUM. The download is not installed."
 fi
 
 if ! tar xzf "$GH_TMP/gh.tar.gz" -C "$GH_TMP"; then
-  echo "ERROR: the gh release tarball could not be extracted."
-  rm -rf "$GH_TMP"
-  exit 1
+  gh_install_failed "the gh release tarball could not be extracted."
 fi
 
-mkdir -p "$GH_INSTALL_DIR"
-
-if ! cp "$GH_TMP/$GH_PKG/bin/gh" "$GH_INSTALL_DIR/gh"; then
-  echo "ERROR: could not install gh into $GH_INSTALL_DIR."
-  rm -rf "$GH_TMP"
-  exit 1
+if ! mkdir -p "$GH_INSTALL_DIR"; then
+  gh_install_failed "could not create $GH_INSTALL_DIR."
 fi
 
-chmod 0755 "$GH_INSTALL_DIR/gh"
+# `install -m` copies and sets the mode in one step, and reports failure of
+# either -- unlike cp followed by an unchecked chmod.
+if ! install -m 0755 "$GH_TMP/$GH_PKG/bin/gh" "$GH_INSTALL_DIR/gh"; then
+  gh_install_failed "could not install gh into $GH_INSTALL_DIR."
+fi
+
 rm -rf "$GH_TMP"
 
 export PATH="$GH_INSTALL_DIR:$PATH"
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "ERROR: gh was installed into $GH_INSTALL_DIR but is still not on PATH."
+if ! gh_is_usable; then
+  echo "ERROR: gh was installed into $GH_INSTALL_DIR but cannot be executed."
   exit 1
 fi
 
-echo "Installed gh ${GH_CLI_VERSION} from the release tarball into $GH_INSTALL_DIR"
+echo "Installed gh ${GH_CLI_VERSION} from the release tarball into $GH_INSTALL_DIR, checksum verified"

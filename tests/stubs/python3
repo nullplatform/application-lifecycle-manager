@@ -3,9 +3,12 @@
 #
 # The repository's tests deliberately need nothing but bash, curl and jq (see the
 # header of tests/run), and signing a real JWT would pull in the `cryptography`
-# package. So build_context's ORCHESTRATION is what these tests cover -- reading
-# the App credentials, minting the installation token, resolving the account --
-# while the signing itself is left to tests/smoke_github_live.
+# package. So what these tests cover is build_context's ORCHESTRATION -- reading
+# the App credentials, minting the installation token, resolving the account.
+#
+# sign_app_jwt.py itself is NOT covered by this suite, and nothing else covers it
+# either. Proving it would need a live run against a real GitHub App, the way
+# tests/smoke_bitbucket_live does for Bitbucket; that file does not exist yet.
 #
 # $PYTHON_STUB_FAIL makes the signing fail, for the path that must react to it.
 

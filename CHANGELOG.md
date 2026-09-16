@@ -9,7 +9,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Fixed
 - GitHub: a failed `mise` no longer ends the workflow. `gh` is fetched from the release tarball
-  instead, into `GH_INSTALL_DIR`. mise's attestation check fails on the nullplatform agent image
+  instead, into `GH_INSTALL_DIR`, and verified against the checksums GitHub publishes with the
+  release. mise's attestation check fails on the nullplatform agent image
   even with working egress and an untouched rate limit, so every GitHub installation hit it on the
   first application it created.
 - `capture_export` and `run_step` no longer collide with the script under test. They source it,
