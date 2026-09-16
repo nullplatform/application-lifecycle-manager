@@ -1,0 +1,39 @@
+#!/bin/bash
+# The dispatcher derives REPOSITORY_NAME from the application's repository_url.
+# When the name comes from metadata that URL does not exist yet, so the resolve
+# step has to run first and win. Without it the name would be basename(null).
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+GITHUB_SPEC_ID="1043b379-9fa8-4d2d-bc18-9c5b0d3038f2"
+
+export CODE_REPOSITORY_PROVIDER="github"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_version=8 dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.template_id = 7')
+export REPOSITORY_NAME_RULE APPLICATION
+
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+if [[ "\$1" == "provider" ]]; then
+  echo '{"results":[{"id":"cfg-1","specification_id":"$GITHUB_SPEC_ID","attributes":{"setup":{"organization":"acme"},"access":{}}}]}'
+else
+  echo '{}'
+fi
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+
+if [[ "$name" != "net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected the dispatcher to use the derived name, got '$name'"
+  exit 1
+fi

@@ -146,6 +146,84 @@ The code repository workflow is composed of the following tasks:
 - **Trigger initial CI build**  
   Optionally kicks off a first CI build so you can deploy your application immediately after creation.
 
+#### Naming the repository from metadata
+
+By default the repository name is the last segment of the application's `repository_url`, which
+the platform already knows by the time the hook runs. Set `REPOSITORY_NAME_RULE` to derive it from
+the metadata the developer filled in while creating the application instead: the repository is then
+born with the right name, with no rename afterwards and no `repository_url` left out of sync.
+
+The rule is a JSON document on the ALM deployment's environment. Set it as
+`REPOSITORY_NAME_RULE`, or — when the deployment cannot carry double quotes in an
+environment variable — base64-encode the same document into
+`REPOSITORY_NAME_RULE_B64`, which is used when the plain variable is empty. The
+nullplatform agent's tofu module needs the encoded form: it renders
+`KEY: "${value}"` straight into its Helm values with no escaping, so a rule with
+quotes breaks the YAML before the agent starts.
+
+```json
+{
+  "metadata_key": "application",
+  "root": "architecture",
+  "branches": {
+    ".NET": ["dotnet_type", "domain", "subdomain"],
+    "Node": ["node_type", "domain", "subdomain"]
+  },
+  "default": ["free_name"]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `metadata_key` | The top-level key the values sit under in the application's `metadata`. This is the `metadata` field of the metadata specification, which is not necessarily the entity name. |
+| `root` | The metadata field whose value both opens the name and selects the branch. |
+| `branches` | Per root value, the metadata fields appended after it, in order. |
+| `default` | The fields used when the root value matches no branch. |
+
+A field name ending in `?` is **optional**: when the metadata carries no value for it, its segment is
+left out and the name closes up, with no empty segment and no failure. Without the marker a missing
+field stops the workflow, which is what you want for a field the form requires — an empty segment
+would produce `net-app--issuance` and bake a name nobody can trace back into the application.
+
+```json
+{ ".NET": ["dotnet_type", "experience?", "system_or_core?", "domain", "subdomain"] }
+```
+
+With that branch, `.NET`/`APP`/`glass`/`cancellation` gives `net-app-glass-cancellation`, and the
+same selections plus Experience `gpas` give `net-app-gpas-glass-cancellation`.
+
+Every value is slugified — accented latin characters transliterated (`Cañería` → `caneria`),
+lowercased, each run of non-alphanumerics collapsed to a single hyphen, edges trimmed — and the results are joined with hyphens. That absorbs the shapes a metadata wizard
+produces without needing a mapping table: `.NET` becomes `net`, `IAC Terraform` becomes
+`iac-terraform`, `Backend BFF` becomes `backend-bff`.
+
+With the rule above:
+
+| Metadata | Repository |
+|---|---|
+| `architecture=.NET`, `dotnet_type=APP`, `domain=fire`, `subdomain=issuance` | `net-app-fire-issuance` |
+| `architecture=Node`, `node_type=Backend BFF`, `domain=motor`, `subdomain=claim` | `node-backend-bff-motor-claim` |
+| `architecture=IAC Terraform`, `free_name=redes` | `iac-terraform-redes` |
+
+Fields the branch does not list are ignored, so a wizard can collect more than the name uses.
+
+A field a branch **does** list that is missing or empty fails the hook, naming that field. An empty
+segment would collapse into `net-app--issuance` and bake a name nobody can trace back into the
+application, so failing is the safer outcome. Names over GitHub's 100 character limit are rejected
+the same way — the free-text branches make that limit reachable.
+
+Two cases are deliberately left alone: an application that already carries a `repository_url` (it
+is importing an existing repository), and any deployment with no `REPOSITORY_NAME_RULE` set.
+
+> **The derived URL travels back in `callback_body`.** An application held in `pending_hook` is
+> frozen: `np application update` answers `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` for every
+> field and every identity, an organization admin key included. That is a state lock, not a
+> permission problem. So once the repository exists its canonical URL is placed in the
+> `callback_body` of the `PATCH` that closes the hook — the only write the platform accepts at that
+> point — and nullplatform merges it into the entity as it resumes. A failed hook closes with a
+> status and no `callback_body`, because a run that stopped before creating the repository must not
+> leave the application pointing at something that does not exist.
+
 #### Using GitHub
 
 To use GitHub as the code repository provider, set `CODE_REPOSITORY_PROVIDER=github` in the
@@ -170,6 +248,29 @@ even when the download succeeds and the host has egress, which every GitHub inst
 otherwise hit on the first application it creates. `GH_CLI_VERSION` pins a version; without it the
 latest release is resolved from the `/releases/latest` redirect, which costs no API rate limit.
 Baking `gh` into the image skips all of this — the step notices it and does nothing.
+
+**Keeping the private key out of the environment (optional).** Of the three values above only
+`GITHUB_PRIVATE_KEY` is really secret, and in the agent's environment it travels through the
+terraform state, the Helm values and every `kubectl describe`; rotating it means an apply and a pod
+restart, which also freezes any application being created at that moment. Set `GITHUB_APP_SECRET_ID`
+and the credentials are read at run time from a secrets store instead:
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_SECRET_ID` | The secret to read. `${GITHUB_ACCOUNT}` in it is replaced by the organization, so one agent can serve several GitHub orgs — adding one is a new secret, not a new deployment. |
+| `GITHUB_APP_SECRET_STORE` | `aws` (default), the only store implemented today. |
+
+The secret holds a JSON object whose keys are all optional, and each one only fills a value the
+environment did not already provide — so the private key can live in the store while the installation
+id keeps coming from the nullplatform provider:
+
+```json
+{ "app_id": "4966079", "installation_id": "162217903", "private_key": "-----BEGIN RSA PRIVATE KEY-----\n..." }
+```
+
+On AWS the agent reads it with its own IAM identity, so the role needs `secretsmanager:GetSecretValue`
+on those secrets and the read shows up in CloudTrail. Without `GITHUB_APP_SECRET_ID` nothing changes:
+the credentials come from the environment as before.
 
 **Why a GitHub App (not a PAT):** the App is owned by the organization, is not tied to a
 person, and needs no manual token rotation — an installation token is minted per run and
@@ -247,6 +348,54 @@ so `FALSE` reads as "run it".
 Skipping a step is not an error: the hook still reports success, and the step that remains
 enabled runs normally. Setting both to `false` leaves the application created with no
 repositories provisioned.
+
+---
+
+## Extension points
+
+Two steps ship doing nothing and exist to be replaced. Installing this repository unchanged behaves
+exactly as it would without them, so adopting either one is opt-in.
+
+| Step | Runs | For |
+|---|---|---|
+| `scripts/approve_creation` | Before any repository is created | Deciding whether this application may be created at all |
+| `scripts/code-repo/scaffold_repository` | After the repository exists, before the first build | Whatever the template cannot express: metadata-dependent substitutions, CODEOWNERS, environments, rulesets, custom properties |
+
+`scaffold_repository` sits directly under `scripts/code-repo` rather than under a provider
+directory. A provider-scoped slot would need one copy of the no-op per provider and would break the
+workflow for any provider that was missing it.
+
+Both are **sourced** into the workflow's shared shell, so the usual rule applies: `return` to
+continue, `exit 1` to stop the workflow, and never `exit 0` — that ends the shared shell and
+silently skips every step that follows. Their stdout becomes the hook's messages, which is what the
+developer sees in the console.
+
+Each file documents the variables it can read; the headers are the reference.
+
+### Refusing an operation
+
+A step that refuses should not report a failure. The platform accepts `success`, `cancelled`,
+`failed` and `recoverable_failure`, and `cancelled` is what a refusal is: the request was understood
+and declined, not broken. `alm_cancel` records the reason and entrypoint closes the hook with it:
+
+```bash
+APPROVE_DIR=$(dirname "${BASH_SOURCE[0]}")
+source "$APPROVE_DIR/cancel"
+
+alm_cancel "businessUnit 'Payments' requires an approver"
+exit 1
+```
+
+The `exit 1` is what stops the workflow; `alm_cancel` only decides how the hook is reported. The
+reason is prepended to the messages so it is not lost among the workflow's own log lines, and a
+cancelled hook carries no `callback_body`.
+
+### Budget
+
+Both steps run while the application is held in `pending_hook` and the developer is watching the
+console. Time spent here is time they wait, and a step that hangs blocks application creation for
+the whole NRN — a `before` hook fails closed. Configuring environments and rulesets belongs here.
+Publishing an SDK does not; that wants to be asynchronous.
 
 ---
 

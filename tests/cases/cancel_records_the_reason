@@ -1,0 +1,23 @@
+#!/bin/bash
+# A rejected approval is not a failure: the platform distinguishes `cancelled`
+# from `failed`, and the developer reading the hook messages sees a different
+# outcome. A step asks for it through this helper, the same file side-channel
+# the callback body uses, because it cannot export back to entrypoint either.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ALM_CANCEL_FILE="$TEST_TMP/cancel.txt"
+
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/cancel"
+
+alm_cancel "application rejected: businessUnit 'Payments' requires an approver"
+
+got=$(cat "$ALM_CANCEL_FILE" 2>&1)
+want="application rejected: businessUnit 'Payments' requires an approver"
+
+if [[ "$got" != "$want" ]]; then
+  echo "  FAIL: expected '$want', got '$got'"
+  exit 1
+fi

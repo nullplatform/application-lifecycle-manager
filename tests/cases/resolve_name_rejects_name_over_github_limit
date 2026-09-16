@@ -1,0 +1,21 @@
+#!/bin/bash
+# GitHub caps repository names at 100 characters. The free-text branches feed a
+# field the developer types by hand, so the limit is reachable. Catching it here
+# names the offending field; letting it through fails later inside the provider
+# API with a message that does not mention metadata at all.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+long_name=$(printf 'a%.0s' $(seq 1 120))
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+APPLICATION=$(wizard_metadata "architecture=SQL Data" "free_name=$long_name")
+export REPOSITORY_NAME_RULE APPLICATION
+
+run_code_repo_step resolve_repository_name
+
+assert_status 1 || exit 1
+assert_contains "100" || exit 1

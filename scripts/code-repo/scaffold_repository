@@ -1,0 +1,45 @@
+#!/bin/bash
+#
+# EXTENSION POINT -- ships doing nothing. Replace the body with your own setup.
+#
+# Runs after the repository exists and the template has been expanded, and before
+# the first build. This is where the things a template cannot express by itself
+# go: substitutions that depend on the application's metadata, CODEOWNERS,
+# environments, rulesets, custom properties, topics.
+#
+# Available:
+#   $REPOSITORY_NAME   $CODE_REPOSITORY_STRATEGY   (create | import)
+#   $APPLICATION       the full application document, metadata included
+#   $NRN   $APPLICATION_ID   $NAMESPACE_SLUG
+#   $CODE_REPOSITORY   the provider configuration, including .attributes
+#   $TEMPLATE_URL      when the strategy is `create`
+#
+# Provider credentials come from that provider's build_context, which has already
+# run. On GitHub that means $GH_TOKEN and $GITHUB_ACCOUNT, so `gh` is
+# authenticated and ready:
+#
+#   gh api --method PUT "/repos/$GITHUB_ACCOUNT/$REPOSITORY_NAME/environments/production"
+#
+# This file is SOURCED into the workflow's shared shell:
+#   return 0   continue
+#   exit 1     stop the workflow
+#   exit 0     NEVER -- it ends the shared shell and silently skips every step
+#              that follows
+#
+# stdout becomes the hook's messages.
+#
+# To write a field back to the application, use the callback body. `np application
+# update` answers 403 here: the entity is frozen until the hook closes.
+#
+#   SCAFFOLD_DIR=$(dirname "${BASH_SOURCE[0]}")
+#   # shellcheck source=scripts/callback_body
+#   source "$SCAFFOLD_DIR/../callback_body"
+#   alm_callback_body_set repository_app_path "services/$REPOSITORY_NAME"
+#
+# Mind the budget: every second here is a second the developer waits on the
+# console spinner, with the application still held in pending_hook. Long or
+# optional work belongs in an asynchronous after hook, not in this step.
+
+echo "scaffold_repository: no scaffolding configured"
+
+return 0

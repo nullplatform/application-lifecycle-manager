@@ -1,0 +1,44 @@
+#!/bin/bash
+#
+# Collects the fields that entrypoint sends back as `callback_body` when it
+# closes the entity hook.
+#
+# Why a file. An application held in `pending_hook` is frozen: `np application
+# update` on it answers 403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING for every
+# field and for every identity, an organization admin key included. That is a
+# state lock, not a permission problem, so the ONLY way to write to the entity
+# being created is the `callback_body` of the PATCH that closes the hook.
+#
+# Steps cannot export a value back to entrypoint -- it runs the workflow inside
+# a command substitution -- so they append to $ALM_CALLBACK_BODY_FILE and
+# entrypoint reads it once the workflow is done.
+#
+# Sourced, like every other script here: no `set -e`, messages to stdout.
+
+if ! type -t alm_callback_body_set >/dev/null 2>&1; then
+  # alm_callback_body_set KEY VALUE
+  #
+  # Merges one field into the callback body. A no-op when no file is configured,
+  # so a step can call it unconditionally and stay usable outside a hook run.
+  alm_callback_body_set() {
+    local key="$1" value="$2"
+    local current='{}'
+
+    if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+      return 0
+    fi
+
+    if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
+      current=$(cat "$ALM_CALLBACK_BODY_FILE")
+    fi
+
+    if ! printf '%s' "$current" \
+      | jq -c --arg k "$key" --arg v "$value" '. + {($k): $v}' > "$ALM_CALLBACK_BODY_FILE.tmp"; then
+      echo "Warning: could not add '$key' to the callback body, leaving it out"
+      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+      return 1
+    fi
+
+    mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"
+  }
+fi

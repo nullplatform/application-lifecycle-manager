@@ -1,0 +1,27 @@
+#!/bin/bash
+# The console pre-fills repository_url with <namespace-slug>-<application-slug>
+# before the hook runs, so by the time this step sees the application it ALWAYS
+# carries a URL. When a template_id is present the application is creating a new
+# repository, and the derived name has to win over that default.
+#
+# This is the case the pilot namespace disagreed with the first implementation on:
+# keying off repository_url made the step no-op on every real creation.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_version=8 dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.repository_url = "https://github.com/acme/test-test-2" | .template_id = 1777342392')
+export APPLICATION
+
+name=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$name" != "net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected the derived name to win over the console default, got '$name'"
+  exit 1
+fi

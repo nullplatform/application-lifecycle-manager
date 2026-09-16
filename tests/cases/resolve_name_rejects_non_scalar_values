@@ -1,0 +1,38 @@
+#!/bin/bash
+# A metadata field whose value is an array or an object is a configuration
+# mistake, but jq renders one across several lines and the segments were being
+# glued into a name with newlines inside it -- which GitHub then rejects with a
+# message that says nothing about metadata.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+expect_rejected() {
+  local label="$1" md="$2"
+
+  APPLICATION=$(jq -nc --argjson md "$md" '{repository_url:null, template_id:7, metadata:{application:$md}}')
+  export APPLICATION
+
+  run_code_repo_step resolve_repository_name
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL: $label should have been rejected, exited $STEP_STATUS"
+    failed=1
+  elif [[ "$STEP_OUTPUT" != *"dotnet_type"* ]]; then
+    echo "  FAIL: $label was rejected without naming the field:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+expect_rejected "an array value"  '{"architecture":".NET","dotnet_type":["a","b"],"domain":"fire","subdomain":"issuance"}'
+expect_rejected "an object value" '{"architecture":".NET","dotnet_type":{"k":"v"},"domain":"fire","subdomain":"issuance"}'
+
+exit "$failed"

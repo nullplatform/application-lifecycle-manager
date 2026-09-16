@@ -33,8 +33,13 @@ jobs:
             $(find scripts/code-repo/bitbucket -maxdepth 1 -type f) \
             $(find scripts/code-repo/github -maxdepth 1 -type f ! -name '*.py') \
             entrypoint \
+            scripts/approve_creation \
+            scripts/callback_body \
+            scripts/cancel \
             scripts/code-repo/create_code_repository \
             scripts/code-repo/generate_secrets \
+            scripts/code-repo/resolve_repository_name \
+            scripts/code-repo/scaffold_repository \
             scripts/base_context \
             $(find scripts/code-repo/gitlab -maxdepth 1 -type f) \
             scripts/asset-repo/create_asset_repository \

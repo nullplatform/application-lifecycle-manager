@@ -26,3 +26,15 @@ if ! gh api --method POST "/repos/$TEMPLATE_OWNER/$TEMPLATE_REPO/generate" \
 fi
 
 echo "Repository created: $GITHUB_ACCOUNT/$REPOSITORY_NAME"
+
+# A name derived from metadata reaches an application that is frozen in
+# pending_hook only through the hook's callback_body -- `np application update`
+# answers 403 there. See scripts/callback_body.
+if [[ "$REPOSITORY_NAME_DERIVED" == "true" ]]; then
+  GITHUB_CREATE_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+  # shellcheck source=scripts/callback_body
+  source "$GITHUB_CREATE_DIR/../../callback_body"
+
+  alm_callback_body_set repository_url "https://github.com/$GITHUB_ACCOUNT/$REPOSITORY_NAME"
+fi

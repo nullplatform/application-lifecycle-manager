@@ -12,6 +12,19 @@ TOKEN=$(np token create --body "{\"api_key\": \"$NP_API_KEY\"}" --format json | 
 
 CALLBACK_URL=$(echo "$NP_ACTION_CONTEXT" | jq -r .notification.callback_url)
 
+# Workflow steps cannot export anything back into this shell -- the workflow runs
+# inside a command substitution below -- so the ones that need to write to the
+# entity being created append their fields to this file instead. It is the only
+# way in: an application held in pending_hook rejects `np application update`
+# with 403 regardless of identity. See scripts/callback_body.
+ALM_CALLBACK_BODY_FILE="${ALM_CALLBACK_BODY_FILE:-$(mktemp)}"
+export ALM_CALLBACK_BODY_FILE
+
+# Same channel, for a step that refuses the operation rather than fails at it.
+# See scripts/cancel.
+ALM_CANCEL_FILE="${ALM_CANCEL_FILE:-$(mktemp)}"
+export ALM_CANCEL_FILE
+
 logs=$(np service workflow exec --workflow workflows/create_app.yaml)
 EXIT_CODE=$?
 # Determine status based on exit code
@@ -19,6 +32,17 @@ if [ $EXIT_CODE -eq 0 ]; then
     STATUS="success"
 else
     STATUS="failed"
+fi
+
+# A step that refused the operation overrides the exit code. It stops the
+# workflow with a non-zero exit, which would otherwise read as `failed`, but
+# nothing broke here -- the request was understood and refused, and the platform
+# tells the two apart. Authoritative even on a zero exit, so a step that cancels
+# and then returns 0 by mistake still closes the hook as cancelled.
+CANCEL_REASON=""
+if [[ -s "$ALM_CANCEL_FILE" ]]; then
+    CANCEL_REASON=$(cat "$ALM_CANCEL_FILE")
+    STATUS="cancelled"
 fi
 
 timestamp=$(($(date +%s) * 1000))
@@ -41,10 +65,33 @@ messages=$(echo "$logs" | while IFS= read -r line; do
     '{level: $level, message: $message, timestamp: ($ts | tonumber)}'
 done | jq -s '.')
 
+# The reason goes first: it is why the application was not created, and it must
+# not be lost among the workflow's own log lines.
+if [[ -n "$CANCEL_REASON" ]]; then
+  messages=$(jq -c \
+    --arg message "$CANCEL_REASON" \
+    --arg ts "$timestamp" \
+    '[{level: "WARNING", message: $message, timestamp: ($ts | tonumber)}] + .' <<< "$messages")
+fi
+
 payload=$(jq -n \
   --arg status "$STATUS" \
   --argjson messages "$messages" \
   '{status: $status, messages: $messages}')
+
+# Only a successful hook writes to the entity. A failed run may have derived a
+# name without creating the repository, and merging that URL would leave the
+# application pointing at something that does not exist.
+if [[ "$STATUS" == "success" && -s "$ALM_CALLBACK_BODY_FILE" ]]; then
+  CALLBACK_BODY=$(cat "$ALM_CALLBACK_BODY_FILE")
+
+  if ! payload=$(jq -c --argjson cb "$CALLBACK_BODY" \
+    'if ($cb | length) > 0 then . + {callback_body: $cb} else . end' <<< "$payload"); then
+    echo "Warning: the callback body is not valid JSON, closing the hook without it: $CALLBACK_BODY"
+    payload=$(jq -n --arg status "$STATUS" --argjson messages "$messages" \
+      '{status: $status, messages: $messages}')
+  fi
+fi
 
 echo "$payload" | jq .
 

@@ -1,0 +1,34 @@
+#!/bin/bash
+# create_repository only reports a repository_url through the callback body when
+# the name actually came from metadata. On the import path, and on every
+# installation that never opted in, the application already owns its URL and
+# must not be handed a second one.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance)
+export APPLICATION
+
+derived=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME_DERIVED)
+if [[ "$derived" != "true" ]]; then
+  echo "  FAIL: expected REPOSITORY_NAME_DERIVED=true after deriving, got '$derived'"
+  exit 1
+fi
+
+# Import path: no template_id, so nothing is derived and the application keeps
+# the repository_url it arrived with.
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.repository_url = "https://github.com/acme/legacy-service" | del(.template_id)')
+export APPLICATION
+
+derived=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME_DERIVED)
+if [[ -n "$derived" ]]; then
+  echo "  FAIL: expected REPOSITORY_NAME_DERIVED to stay unset on an import, got '$derived'"
+  exit 1
+fi

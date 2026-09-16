@@ -1,0 +1,56 @@
+#!/bin/bash
+# Regression coverage, not discovery: every branch below already works once the
+# rule traversal exists. It is here to pin the naming contract, so a later change
+# to the slug or to the branch lookup cannot quietly renumber existing repositories.
+#
+# Note what the slug absorbs with no mapping table of any kind:
+#   ".NET" -> net        "IAC Terraform" -> iac-terraform    "Backend BFF" -> backend-bff
+# and what never reaches the name: the version. Moving an application from
+# .NET 8 to .NET 10 must not move it to a different repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+expect() {
+  local want="$1"; shift
+  local got
+
+  APPLICATION=$(wizard_metadata "$@")
+  export APPLICATION
+
+  got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+  if [[ "$got" != "$want" ]]; then
+    echo "  FAIL: $* "
+    echo "        expected '$want', got '$got'"
+    failed=1
+  fi
+}
+
+expect net-app-fire-issuance          architecture=.NET dotnet_version=8  dotnet_type=APP domain=fire   subdomain=issuance
+expect net-app-fire-issuance          architecture=.NET dotnet_version=10 dotnet_type=APP domain=fire   subdomain=issuance
+expect net-int-motor-claim            architecture=.NET dotnet_version=8  dotnet_type=INT domain=motor  subdomain=claim
+expect net-cp-motor-claim             architecture=.NET dotnet_version=8  dotnet_type=CP  domain=motor  subdomain=claim
+expect node-frontend-health-payment   architecture=Node node_version=20   node_type=Frontend      domain=health subdomain=payment
+expect node-backend-bff-motor-claim   architecture=Node node_version=22   "node_type=Backend BFF" domain=motor  subdomain=claim
+expect iac-terraform-redes            "architecture=IAC Terraform" free_name=redes
+expect sql-data-dwh-corporativo       "architecture=SQL Data"      "free_name=DWH Corporativo"
+expect no-standard-legacy             "architecture=No Standard"   free_name=legacy
+
+# The free branches ask for no domain/subdomain, so values left over from an
+# earlier pass through the wizard must not leak into the name.
+expect iac-terraform-redes            "architecture=IAC Terraform" free_name=redes domain=fire subdomain=issuance
+
+# experience and system_or_core are collected by the wizard but are NOT part of
+# the name; this is the case the two repositories in the pilot namespace disagreed on.
+expect net-app-transport-claim        architecture=.NET dotnet_version=8 dotnet_type=APP experience=broker      domain=transport subdomain=claim
+expect net-int-transport-endorsement  architecture=.NET dotnet_version=8 dotnet_type=INT system_or_core=vt7     domain=transport subdomain=endorsement
+
+exit "$failed"

@@ -1,0 +1,29 @@
+#!/bin/bash
+# approve_creation is an extension point: it ships doing nothing, so installing
+# this repository unchanged behaves exactly as it did before the slot existed.
+# Its position is the contract -- it has to run before anything is created, or an
+# approval that refuses arrives after the repository already exists.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+run_script_step approve_creation
+assert_status 0 || exit 1
+
+order=$(grep -n 'file:' "$REPO_ROOT/workflows/create_app.yaml" | grep -n -E 'approve_creation|create_code_repository|create_asset_repository')
+
+approve_at=$(grep -n 'approve_creation' "$REPO_ROOT/workflows/create_app.yaml" | head -1 | cut -d: -f1)
+code_at=$(grep -n 'code-repo/create_code_repository' "$REPO_ROOT/workflows/create_app.yaml" | head -1 | cut -d: -f1)
+asset_at=$(grep -n 'asset-repo/create_asset_repository' "$REPO_ROOT/workflows/create_app.yaml" | head -1 | cut -d: -f1)
+
+if [[ -z "$approve_at" ]]; then
+  echo "  FAIL: approve_creation is not wired into workflows/create_app.yaml"
+  exit 1
+fi
+
+if [[ "$approve_at" -gt "$code_at" || "$approve_at" -gt "$asset_at" ]]; then
+  echo "  FAIL: approve_creation must run before both repositories are created."
+  echo "        approve=$approve_at code=$code_at asset=$asset_at"
+  printf '%s\n' "$order" | sed 's/^/    /'
+  exit 1
+fi

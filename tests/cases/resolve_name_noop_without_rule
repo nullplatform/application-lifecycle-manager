@@ -1,0 +1,26 @@
+#!/bin/bash
+# Without REPOSITORY_NAME_RULE the step must return early and SAY so, leaving
+# REPOSITORY_NAME untouched: the dispatcher then derives the name from the
+# application's repository_url exactly as it did before this step existed.
+# Every installation that does not opt in depends on this.
+#
+# stdout is asserted on purpose -- entrypoint forwards it to the hook's
+# messages, so "why did this not run" has to be visible in the platform.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance)
+export APPLICATION
+
+run_code_repo_step resolve_repository_name
+assert_status 0 || exit 1
+assert_contains "REPOSITORY_NAME_RULE" || exit 1
+
+name=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+if [[ -n "$name" ]]; then
+  echo "  FAIL: expected REPOSITORY_NAME to stay unset, got '$name'"
+  exit 1
+fi

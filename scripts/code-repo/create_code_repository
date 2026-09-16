@@ -13,6 +13,11 @@ if workflow_skip_step CREATE_CODE_REPOSITORY createCodeRepository; then
   return 0
 fi
 
+# Must run before the name is read off the URL: when the name comes from the
+# metadata the developer filled in, the application has no repository_url yet.
+# shellcheck source=scripts/code-repo/resolve_repository_name
+source "$CURRENT_DIR/resolve_repository_name"
+
 REPOSITORY_URL=$(echo "$APPLICATION" | jq -r .repository_url)
 TEMPLATE_ID=$(echo "$APPLICATION" | jq -r '.template_id // empty' )
 
@@ -26,7 +31,14 @@ else
   CODE_REPOSITORY_STRATEGY=import
 fi
 
-REPOSITORY_NAME=$(basename "$REPOSITORY_URL")
+# Keyed on what THIS run produced, not on whether REPOSITORY_NAME happens to hold
+# something: before the naming step existed this variable was overwritten
+# unconditionally, so an installation that carries one in its agent environment
+# for any unrelated reason has to stay unaffected. Reading the value instead of
+# the marker would name every one of its repositories the same.
+if [[ "$REPOSITORY_NAME_DERIVED" != "true" ]]; then
+  REPOSITORY_NAME=$(basename "$REPOSITORY_URL")
+fi
 
 if [[ -n "$CODE_REPOSITORY_PROVIDER" ]]; then
   echo "Using CODE_REPOSITORY_PROVIDER from environment: $CODE_REPOSITORY_PROVIDER"

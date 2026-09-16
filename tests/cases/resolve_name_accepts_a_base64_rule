@@ -1,0 +1,33 @@
+#!/bin/bash
+# The rule is JSON, so it carries double quotes, and not every deployment can put
+# those in an environment variable. The nullplatform agent tofu module renders
+# `KEY: "${value}"` straight into its Helm values with no escaping, so a rule with
+# quotes breaks the YAML before the agent ever starts.
+#
+# REPOSITORY_NAME_RULE_B64 is the way out: same document, no quotes to survive.
+# The plain variable still wins when both are set.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME REPOSITORY_NAME_RULE
+
+REPOSITORY_NAME_RULE_B64=$(wizard_rule | base64 | tr -d '\n')
+export REPOSITORY_NAME_RULE_B64
+
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_version=8 dotnet_type=APP domain=fire subdomain=issuance)
+export APPLICATION
+
+name=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$name" != "net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected the base64 rule to be decoded, got '$name'"
+  exit 1
+fi
+
+# Garbage must fail loudly, not silently behave like no rule at all.
+export REPOSITORY_NAME_RULE_B64="not-valid-base64-%%%"
+run_code_repo_step resolve_repository_name
+
+assert_status 1 || exit 1
+assert_contains "REPOSITORY_NAME_RULE_B64" || exit 1

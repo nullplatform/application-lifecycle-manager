@@ -1,0 +1,172 @@
+#!/bin/bash
+#
+# Derives the repository name from the metadata the developer filled in when the
+# application was created, so the repository is born with the right name.
+#
+# Opt-in: without REPOSITORY_NAME_RULE the step does nothing and the dispatcher
+# keeps deriving the name from the application's repository_url.
+#
+# Like every step here this file is SOURCED into the workflow's shared shell, so
+# a no-op must `return` and never `exit` -- an `exit 0` would end that shell and
+# silently skip every later step, repository creation included.
+
+# The rule is JSON, so it carries double quotes, and not every deployment can put
+# those in an environment variable -- the nullplatform agent tofu module renders
+# `KEY: "${value}"` straight into its Helm values with no escaping, and the YAML
+# breaks before the agent starts. REPOSITORY_NAME_RULE_B64 carries the same
+# document with nothing to escape. The plain variable wins when both are set.
+RESOLVE_RULE_SOURCE="REPOSITORY_NAME_RULE"
+
+if [[ -z "$REPOSITORY_NAME_RULE" && -n "${REPOSITORY_NAME_RULE_B64:-}" ]]; then
+  RESOLVE_RULE_SOURCE="REPOSITORY_NAME_RULE_B64"
+
+  # base64 implementations disagree about junk input: some fail, busybox and the
+  # macOS one happily emit binary. So the decode is not the check -- the JSON
+  # validation below is, and it reports whichever variable the rule came from.
+  REPOSITORY_NAME_RULE=$(printf '%s' "$REPOSITORY_NAME_RULE_B64" | base64 -d 2>/dev/null)
+fi
+
+if [[ -z "$REPOSITORY_NAME_RULE" ]]; then
+  echo "No REPOSITORY_NAME_RULE configured, leaving the repository name to the application's repository_url"
+  return 0
+fi
+
+# A rule that is not valid JSON would otherwise surface as a confusing "the
+# metadata field '' is required", because every jq lookup against it comes back
+# empty.
+if ! jq -e . >/dev/null 2>&1 <<<"$REPOSITORY_NAME_RULE"; then
+  if [[ "$RESOLVE_RULE_SOURCE" == "REPOSITORY_NAME_RULE_B64" ]]; then
+    # Decoded junk is binary; printing it would corrupt the hook's messages.
+    echo "ERROR: REPOSITORY_NAME_RULE_B64 did not decode to valid JSON. Check the base64 is intact and single-line."
+  else
+    echo "ERROR: REPOSITORY_NAME_RULE is not valid JSON: $REPOSITORY_NAME_RULE"
+  fi
+  exit 1
+fi
+
+# Import is told apart by the ABSENCE of a template_id -- the same test the
+# dispatcher uses to choose between its `create` and `import` strategies.
+#
+# Not by the presence of a repository_url: the console fills that in before the
+# hook runs, defaulting to <namespace-slug>-<application-slug>, so every
+# application arrives here already carrying one. Keying off the URL would make
+# this step no-op on every real creation, which is exactly what it did at first.
+RESOLVE_TEMPLATE_ID=$(jq -r '.template_id // empty' <<<"$APPLICATION")
+
+if [[ -z "$RESOLVE_TEMPLATE_ID" ]]; then
+  RESOLVE_EXISTING_URL=$(jq -r '.repository_url // empty' <<<"$APPLICATION")
+  echo "Application has no template_id, so it is importing an existing repository (${RESOLVE_EXISTING_URL:-unknown}); keeping its repository_url instead of deriving a name"
+  return 0
+fi
+
+# Slugify: transliterate, lowercase, every run of non-alphanumerics to one
+# hyphen, edges trimmed.
+#
+# The transliteration is not cosmetic. Free-text metadata is typed by people, and
+# these fields carry ñ and accents; the slug keeps only [a-z0-9], and a multi-byte
+# character is several bytes, so "Cañería" would come out as "ca-er-a".
+#
+# One s/// per character, and deliberately not a y/// or a bracket expression.
+# y/// is byte-wise in busybox sed, which the agent image ships, and corrupts
+# multi-byte input outright. A bracket expression like [áàäâã] is byte-wise under
+# GNU sed in the C locale, which is what CI runs: each byte of a two-byte
+# character is replaced separately, so "Cañería" comes out "caa-eraia". Matching
+# the whole character as a literal string is the only form that behaves the same
+# on all three. `tr` for the case fold rather than ${v,,} because that bash is not
+# guaranteed to be 4.x.
+resolve_slug() {
+  printf '%s' "$1" \
+    | sed \
+    -e 's/á/a/g; s/à/a/g; s/ä/a/g; s/â/a/g; s/ã/a/g; s/å/a/g' \
+    -e 's/Á/A/g; s/À/A/g; s/Ä/A/g; s/Â/A/g; s/Ã/A/g; s/Å/A/g' \
+    -e 's/é/e/g; s/è/e/g; s/ë/e/g; s/ê/e/g' \
+    -e 's/É/E/g; s/È/E/g; s/Ë/E/g; s/Ê/E/g' \
+    -e 's/í/i/g; s/ì/i/g; s/ï/i/g; s/î/i/g' \
+    -e 's/Í/I/g; s/Ì/I/g; s/Ï/I/g; s/Î/I/g' \
+    -e 's/ó/o/g; s/ò/o/g; s/ö/o/g; s/ô/o/g; s/õ/o/g' \
+    -e 's/Ó/O/g; s/Ò/O/g; s/Ö/O/g; s/Ô/O/g; s/Õ/O/g' \
+    -e 's/ú/u/g; s/ù/u/g; s/ü/u/g; s/û/u/g' \
+    -e 's/Ú/U/g; s/Ù/U/g; s/Ü/U/g; s/Û/U/g' \
+    -e 's/ñ/n/g' \
+    -e 's/Ñ/N/g' \
+    -e 's/ç/c/g' \
+    -e 's/Ç/C/g' \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+RESOLVE_METADATA_KEY=$(jq -r '.metadata_key' <<<"$REPOSITORY_NAME_RULE")
+RESOLVE_ROOT_FIELD=$(jq -r '.root' <<<"$REPOSITORY_NAME_RULE")
+
+RESOLVE_VALUES=$(jq -c --arg k "$RESOLVE_METADATA_KEY" '.metadata[$k] // {}' <<<"$APPLICATION")
+RESOLVE_ROOT_VALUE=$(jq -r --arg f "$RESOLVE_ROOT_FIELD" '.[$f] // empty' <<<"$RESOLVE_VALUES")
+
+# Without the root value there is no branch to pick, and the default branch
+# would blame whichever field it asks for first. Blame the root field instead.
+if [[ -z "$RESOLVE_ROOT_VALUE" ]]; then
+  echo "ERROR: the metadata field '$RESOLVE_ROOT_FIELD' is required to build the repository name but is empty or missing."
+  exit 1
+fi
+
+RESOLVE_NAME=$(resolve_slug "$RESOLVE_ROOT_VALUE")
+
+while read -r resolve_field; do
+  [[ -z "$resolve_field" ]] && continue
+
+  # A trailing "?" marks the field optional. The wizard collects fields the
+  # developer may leave blank, and a blank one has to leave no trace: no empty
+  # segment, no doubled hyphen, no failure.
+  resolve_optional=0
+  if [[ "$resolve_field" == *\? ]]; then
+    resolve_optional=1
+    resolve_field="${resolve_field%\?}"
+  fi
+
+  # Only scalars can become a path segment. jq renders an array or an object
+  # across several lines, and those newlines used to end up inside the repository
+  # name, which the provider then rejects with a message that mentions nothing
+  # about metadata.
+  resolve_kind=$(jq -r --arg f "$resolve_field" '.[$f] | type' <<<"$RESOLVE_VALUES")
+
+  if [[ "$resolve_kind" == "array" || "$resolve_kind" == "object" ]]; then
+    echo "ERROR: the metadata field '$resolve_field' is a $resolve_kind; only a single value can become part of a repository name."
+    exit 1
+  fi
+
+  resolve_value=$(jq -r --arg f "$resolve_field" '.[$f] // empty' <<<"$RESOLVE_VALUES")
+  resolve_segment=$(resolve_slug "$resolve_value")
+
+  if [[ -z "$resolve_segment" ]]; then
+    if [[ "$resolve_optional" -eq 1 ]]; then
+      continue
+    fi
+
+    # A required field that is missing would otherwise collapse into
+    # 'net-app--issuance'. Because this runs inside a before-create hook, that
+    # name would be baked into an application nobody can trace back to a
+    # repository. Fail loudly instead.
+    echo "ERROR: the metadata field '$resolve_field' is required to build the repository name for '$RESOLVE_ROOT_VALUE' but is empty or missing."
+    exit 1
+  fi
+
+  RESOLVE_NAME="$RESOLVE_NAME-$resolve_segment"
+done <<<"$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '(.branches[$r] // .default)[]' <<<"$REPOSITORY_NAME_RULE")"
+
+# The slug already guarantees GitHub's charset ([a-z0-9-]); the length is the
+# part a free-text metadata field can still blow past. Failing here names the
+# metadata, where the fix is; failing at the provider API does not.
+if [[ "${#RESOLVE_NAME}" -gt 100 ]]; then
+  echo "ERROR: the derived repository name is ${#RESOLVE_NAME} characters, over the 100 character limit: $RESOLVE_NAME"
+  exit 1
+fi
+
+echo "Derived repository name from metadata: $RESOLVE_NAME"
+
+REPOSITORY_NAME="$RESOLVE_NAME"
+
+# Tells create_repository that the application does not know this URL yet, so it
+# has to travel back through the hook's callback_body.
+REPOSITORY_NAME_DERIVED="true"
+
+export REPOSITORY_NAME
+export REPOSITORY_NAME_DERIVED

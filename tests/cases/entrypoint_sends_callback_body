@@ -1,0 +1,30 @@
+#!/bin/bash
+# The PATCH that closes the hook is the only write the platform accepts while the
+# application sits in pending_hook, so whatever the workflow put in the callback
+# body has to travel with it. Without this the derived name is computed, the
+# repository is created, and the application still points nowhere.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CALLBACK_URL="https://api.nullplatform.com/entity_hook/abc123"
+
+export NP_API_KEY="test-key"
+export NP_ACTION_CONTEXT="{\"notification\":{\"callback_url\":\"$CALLBACK_URL\",\"nrn\":\"organization=1:account=2:namespace=3:application=4\"}}"
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+echo '{"repository_url":"https://github.com/acme/net-app-fire-issuance"}' > "$ALM_CALLBACK_BODY_FILE"
+
+fixture PATCH "$CALLBACK_URL" 200 ""
+
+(cd "$REPO_ROOT" && bash entrypoint) >/dev/null 2>&1
+
+body=$(request_body PATCH "$CALLBACK_URL")
+got=$(printf '%b' "$body" | jq -r '.callback_body.repository_url // empty' 2>/dev/null)
+
+if [[ "$got" != "https://github.com/acme/net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected the repository_url in callback_body, got '$got'"
+  echo "  body sent:"
+  printf '%b\n' "$body" | sed 's/^/    /'
+  exit 1
+fi
