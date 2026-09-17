@@ -1,0 +1,82 @@
+#!/bin/bash
+# The wizard asks for fields the developer may leave blank -- Experience on the
+# .NET APP branch, the free text on the Node ones. Every field the form collects
+# has to be able to reach the name, but a blank one must leave no trace: no empty
+# segment, no double hyphen, and above all no failure.
+#
+# A trailing "?" on the field name in the rule marks it optional. Required fields
+# keep failing loudly when they are missing -- that is a different case, and the
+# one that would otherwise bake an untraceable name into an application.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(jq -nc '{
+  metadata_key: "application",
+  root: "architecture",
+  branches: {
+    ".NET": ["dotnet_type", "experience?", "system_or_core?", "domain", "subdomain"],
+    "Node": ["node_type", "domain", "subdomain", "free_text_optional?"]
+  },
+  default: ["free_name"]
+}')
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+expect() {
+  local want="$1"; shift
+  local got
+
+  APPLICATION=$(wizard_metadata "$@")
+  export APPLICATION
+
+  got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+  if [[ "$got" != "$want" ]]; then
+    echo "  FAIL: $*"
+    echo "        expected '$want', got '$got'"
+    failed=1
+  fi
+}
+
+# Optional field filled in: it takes its slot.
+expect net-app-gpas-glass-cancellation \
+  architecture=.NET dotnet_type=APP experience=gpas domain=glass subdomain=cancellation
+
+# Same branch, optional field left blank: the slot disappears, no empty segment.
+expect net-app-fire-issuance \
+  architecture=.NET dotnet_type=APP domain=fire subdomain=issuance
+
+# Present but empty is the same as absent -- the console sends "" for a cleared field.
+expect net-app-fire-issuance \
+  architecture=.NET dotnet_type=APP experience= domain=fire subdomain=issuance
+
+# INT fills the same slot with a different field.
+expect net-int-vt7-transport-endorsement \
+  architecture=.NET dotnet_type=INT system_or_core=vt7 domain=transport subdomain=endorsement
+
+# Optional at the end of the branch.
+expect node-backend-bff-fire-cancellation-mobile \
+  "architecture=Node" "node_type=Backend BFF" domain=fire subdomain=cancellation free_text_optional=mobile
+
+expect node-backend-bff-fire-cancellation \
+  "architecture=Node" "node_type=Backend BFF" domain=fire subdomain=cancellation
+
+# A REQUIRED field that is missing must still stop the workflow.
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP experience=gpas subdomain=issuance)
+export APPLICATION
+run_code_repo_step resolve_repository_name
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: a missing REQUIRED field must still exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"'domain'"* ]]; then
+  echo "  FAIL: the missing required field was not named:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"

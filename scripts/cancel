@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# Lets a step end the hook as `cancelled` instead of `failed`.
+#
+# The platform accepts four outcomes on the callback: success, cancelled, failed
+# and recoverable_failure. A rejected approval is a `cancelled` -- the request was
+# understood and refused -- while `failed` says something broke. The developer
+# reading the application's messages sees the difference, so it is worth keeping.
+#
+# Steps cannot export back to entrypoint (the workflow runs inside a command
+# substitution), so the reason goes to a file, like the callback body does.
+#
+# Usage, from any step:
+#
+#   source "$CURRENT_DIR/../cancel"
+#   alm_cancel "businessUnit 'Payments' requires an approver"
+#   exit 1
+#
+# The `exit 1` is what stops the workflow; alm_cancel only decides how the hook
+# is reported. entrypoint treats a recorded reason as authoritative, so a step
+# that cancels and then returns 0 by mistake still closes as cancelled.
+
+if ! type -t alm_cancel >/dev/null 2>&1; then
+  # alm_cancel REASON -- record why the operation is being refused.
+  alm_cancel() {
+    local reason="$1"
+
+    echo "Cancelling: $reason"
+
+    if [[ -z "${ALM_CANCEL_FILE:-}" ]]; then
+      return 0
+    fi
+
+    # Checked: this file is the only channel. entrypoint decides between `failed`
+    # and `cancelled` by whether it has content, so a write that failed silently
+    # turns a refusal into a failure -- the developer is told something broke,
+    # when their request was understood and declined.
+    if ! printf '%s' "$reason" > "$ALM_CANCEL_FILE"; then
+      echo "ERROR: could not write the cancellation reason to $ALM_CANCEL_FILE; the hook will close as failed instead of cancelled."
+      return 1
+    fi
+  }
+fi

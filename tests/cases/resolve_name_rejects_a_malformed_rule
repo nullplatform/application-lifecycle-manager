@@ -1,0 +1,59 @@
+#!/bin/bash
+# The rule is written by whoever configures the agent, and the developer creating
+# an application cannot see it. So a malformed one has to say the rule is wrong,
+# not blame a metadata field the developer did fill in -- and it must never end
+# with a name that looks derived.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+failed=0
+
+expect_rejected() {
+  local label="$1" rule="$2" needle="$3"
+
+  unset REPOSITORY_NAME REPOSITORY_NAME_RULE_B64
+  export CODE_REPOSITORY_STRATEGY="create"
+  export REPOSITORY_NAME_RULE="$rule"
+  APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance)
+  export APPLICATION
+
+  run_code_repo_step resolve_repository_name
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL: $label should exit 1, got $STEP_STATUS"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+    return
+  fi
+  if [[ "$STEP_OUTPUT" != *"$needle"* ]]; then
+    echo "  FAIL: $label did not mention '$needle':"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+# jq -r on a missing key yields the STRING "null", so a typo in metadata_key used
+# to look up .metadata["null"], find nothing, and blame `domain` -- a field the
+# developer answered, for a rule they never wrote.
+expect_rejected "a missing metadata_key" \
+  '{"root":"architecture","branches":{".NET":["domain"]}}' "metadata_key"
+
+expect_rejected "a missing root" \
+  '{"metadata_key":"application","branches":{".NET":["domain"]}}' "root"
+
+expect_rejected "a branches that is not an object" \
+  '{"metadata_key":"application","root":"architecture","branches":"nope"}' "branches"
+
+# `.[]` over an object is valid jq -- it iterates the VALUES -- so a branch
+# written as an object asked for a metadata field the rule never named.
+expect_rejected "a branch that is not a list" \
+  '{"metadata_key":"application","root":"architecture","branches":{".NET":{"a":"domain"}}}' "branch"
+
+# No branch for this root and no default: jq fails, its status dies inside $( ),
+# the loop never runs, and the name used to come out as the root's slug alone --
+# reported as a success, with the repository created under it.
+expect_rejected "a root with no branch and no default" \
+  '{"metadata_key":"application","root":"architecture","branches":{"Node":["domain"]}}' "architecture"
+
+exit "$failed"

@@ -1,0 +1,59 @@
+#!/bin/bash
+# The regression guard for every installation that predates the naming step.
+#
+# With no REPOSITORY_NAME_RULE anywhere, the dispatcher must behave exactly as it
+# did before resolve_repository_name existed: REPOSITORY_NAME is the last segment
+# of the repository_url the platform already put on the application, and nothing
+# is written back through the hook's callback body.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME REPOSITORY_NAME_RULE REPOSITORY_NAME_RULE_B64
+
+GITHUB_SPEC_ID="1043b379-9fa8-4d2d-bc18-9c5b0d3038f2"
+
+export CODE_REPOSITORY_PROVIDER="github"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+
+# An application shaped the way the console produces one: it already carries the
+# default repository_url, and a template because it is creating a repository.
+APPLICATION=$(jq -nc '{
+  repository_url: "https://github.com/acme/legacy-namespace-legacy-app",
+  template_id: 7,
+  metadata: {}
+}')
+export APPLICATION
+
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+if [[ "\$1" == "provider" ]]; then
+  echo '{"results":[{"id":"cfg-1","specification_id":"$GITHUB_SPEC_ID","attributes":{"setup":{"organization":"acme"},"access":{}}}]}'
+else
+  echo '{}'
+fi
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+
+if [[ "$name" != "legacy-namespace-legacy-app" ]]; then
+  echo "  FAIL: the legacy name derivation changed. Expected 'legacy-namespace-legacy-app', got '$name'"
+  exit 1
+fi
+
+derived=$(capture_code_repo_export create_code_repository REPOSITORY_NAME_DERIVED)
+if [[ -n "$derived" ]]; then
+  echo "  FAIL: REPOSITORY_NAME_DERIVED must stay unset, so create_repository writes no callback body. Got '$derived'"
+  exit 1
+fi
+
+# And the strategy is still decided by the template, untouched.
+strategy=$(capture_code_repo_export create_code_repository CODE_REPOSITORY_STRATEGY)
+if [[ "$strategy" != "create" ]]; then
+  echo "  FAIL: expected strategy 'create', got '$strategy'"
+  exit 1
+fi

@@ -1,0 +1,33 @@
+#!/bin/bash
+# `aws` CLI stub: records the invocation and returns a canned SecretString.
+#
+# The fixture is keyed by secret id, so a case can stub several secrets and assert
+# which one was actually asked for -- the id is templated per organization, and
+# picking the wrong one is the mistake worth catching.
+#
+# $AWS_STUB_FAIL makes the call fail, for the path that must react to a secret
+# that cannot be read (missing, no permission, wrong region).
+
+printf 'aws\t%s\n' "$*" >> "$BB_CALLS"
+
+if [[ -n "$AWS_STUB_FAIL" ]]; then
+  echo "An error occurred (AccessDeniedException) when calling the GetSecretValue operation" >&2
+  exit 255
+fi
+
+secret_id=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --secret-id) secret_id="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+key="secret_$(printf '%s' "$secret_id" | sed -e 's|[^A-Za-z0-9]|_|g')"
+
+if [[ ! -f "$BB_FIXTURES/${key}.body" ]]; then
+  echo "aws: no fixture for secret '$secret_id'" >&2
+  exit 255
+fi
+
+cat "$BB_FIXTURES/${key}.body"

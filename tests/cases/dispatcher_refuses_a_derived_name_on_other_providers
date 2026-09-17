@@ -1,0 +1,98 @@
+#!/bin/bash
+# Deriving the name is implemented for GitHub only: github/create_repository is
+# the one step that writes the derived URL back through the callback body.
+# REPOSITORY_NAME itself is provider-agnostic, though, and the naming step runs
+# before the provider is known, so a rule configured on an agent that talks to
+# another provider would take effect there with nothing to reconcile it.
+#
+# What that produces, if it is allowed through:
+#   - the repository is created under the derived name
+#   - the application keeps the console's repository_url
+#   - an application is resolved by an EXACT match on that URL, so the two never
+#     meet again, and nothing reports it
+#
+# So it stops here, before the workflow runs and before anything is created.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+
+failed=0
+
+run_with_provider() {
+  local provider="$1" spec
+
+  # The dispatcher picks the provider by the specification id on the provider
+  # record, so each case needs the real one.
+  case "$provider" in
+    github)    spec=1043b379-9fa8-4d2d-bc18-9c5b0d3038f2 ;;
+    gitlab)    spec=2ff2fe2f-6434-48be-aed2-be22d4d4e77c ;;
+    bitbucket) spec=ca7019c5-f7da-4b79-8fd6-28afbaea366b ;;
+    *)         echo "  FAIL: no specification id for provider '$provider'"; exit 1 ;;
+  esac
+
+  : > "$BB_CALLS"
+  unset REPOSITORY_NAME REPOSITORY_NAME_DERIVED
+  export CODE_REPOSITORY_PROVIDER="$provider"
+
+  cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+case "\$1" in
+  provider) echo '{"results":[{"id":"cfg-1","specification_id":"$spec","attributes":{"setup":{"organization":"acme","workspace":"acme","group":"acme"},"access":{}}}]}' ;;
+  template) echo '{"id":7,"url":"https://github.com/acme/tpl"}' ;;
+  *)        echo '{}' ;;
+esac
+STUB
+  chmod +x "$TEST_TMP/np"
+  export PATH="$TEST_TMP:$PATH"
+
+  run_code_repo_step create_code_repository
+}
+
+REPOSITORY_NAME_RULE=$(wizard_rule); export REPOSITORY_NAME_RULE
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.repository_url = "https://github.com/acme/ns-app"')
+export APPLICATION
+
+# GitHub: the supported case, runs.
+run_with_provider github
+if [[ "$STEP_STATUS" != 0 ]]; then
+  echo "  FAIL: github should still work, exited $STEP_STATUS"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+# The others: refused, naming the provider, and without running the workflow.
+for provider in gitlab bitbucket; do
+  run_with_provider "$provider"
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL: $provider with a naming rule should exit 1, got $STEP_STATUS"
+    failed=1
+  elif [[ "$STEP_OUTPUT" != *"$provider"* ]]; then
+    echo "  FAIL: the refusal for $provider did not name it:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+
+  if grep -q "service workflow exec" "$BB_CALLS"; then
+    echo "  FAIL: $provider reached the workflow; nothing should have been created"
+    failed=1
+  fi
+done
+
+# And with no rule configured, every provider is untouched.
+unset REPOSITORY_NAME_RULE
+for provider in gitlab bitbucket; do
+  run_with_provider "$provider"
+  if [[ "$STEP_STATUS" != 0 ]]; then
+    echo "  FAIL: $provider without a rule should be unaffected, exited $STEP_STATUS"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+done
+
+exit "$failed"

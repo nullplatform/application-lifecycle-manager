@@ -19,6 +19,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   and returned a plausible wrong value instead of failing.
 
 ### Added
+- `REPOSITORY_NAME_RULE` derives the repository name from the metadata filled in when the
+  application is created, so the repository is born with the right name. Opt-in: without it the
+  name still comes from the application's `repository_url`. `REPOSITORY_NAME_RULE_B64` carries the
+  same document base64-encoded, for deployments that cannot put double quotes in an environment
+  variable. A field name ending in `?` is optional and leaves no trace when blank.
+- The hook callback now carries a `callback_body`, which writes to the application without racing
+  the 403 window an application being created answers to `np application update`. A derived
+  `repository_url` reaches the entity through it; a failed or cancelled hook sends none.
+- `alm_cancel` closes the hook as `cancelled` instead of `failed`, for a step that refuses an
+  operation rather than breaks on it. The reason is reported to the developer.
+- Two extension points that ship doing nothing: `approve_creation`, before anything is created, and
+  `scaffold_repository`, after the repository exists and before the first build.
+- `GITHUB_APP_SECRET_ID` reads the GitHub App's credentials from a secrets store at run time
+  instead of the agent's environment, keeping the private key out of the terraform state and the
+  Helm values. The id is templated per organization, so one agent can serve several. Opt-in.
 - A test suite for the GitHub code repository provider: 16 cases across all six of its steps,
   where it previously had none. `tests/stubs/gh` resolves canned responses from the same fixtures
   the curl stub uses, so a GitHub case is written the same way a Bitbucket one is.

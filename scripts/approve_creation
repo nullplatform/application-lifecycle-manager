@@ -1,0 +1,37 @@
+#!/bin/bash
+#
+# EXTENSION POINT -- ships doing nothing. Replace the body with your own rules.
+#
+# Runs with the application held in `pending_hook`, before any repository is
+# created, so refusing here leaves nothing behind to clean up.
+#
+# Available:
+#   $APPLICATION      the full application document, metadata included
+#   $APPLICATION_ID   $NRN   $NAMESPACE   $NAMESPACE_SLUG   $ACCOUNT_ID
+#
+# This file is SOURCED into the workflow's shared shell:
+#   return 0   continue
+#   exit 1     stop the workflow
+#   exit 0     NEVER -- it ends the shared shell and silently skips every step
+#              that follows, repository creation included
+#
+# stdout becomes the hook's messages, which is what the developer sees in the
+# console. It is the only observability this step has.
+#
+# To refuse, record a reason first so the hook closes as `cancelled` rather than
+# `failed` -- the platform tells them apart, and so does the developer:
+#
+#   APPROVE_DIR=$(dirname "${BASH_SOURCE[0]}")
+#   # shellcheck source=scripts/cancel
+#   source "$APPROVE_DIR/cancel"
+#
+#   BUSINESS_UNIT=$(jq -r '.metadata.application.businessUnit // empty' <<<"$APPLICATION")
+#
+#   if [[ "$BUSINESS_UNIT" == "Payments" ]]; then
+#     alm_cancel "businessUnit 'Payments' requires an approver"
+#     exit 1
+#   fi
+
+echo "approve_creation: no approval rules configured, continuing"
+
+return 0

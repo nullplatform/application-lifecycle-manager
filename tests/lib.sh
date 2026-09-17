@@ -283,3 +283,45 @@ CURL
   export GH_CLI_VERSION="2.101.0"
   export GH_INSTALL_DIR="$GH_SANDBOX_DEST"
 }
+
+# secret_fixture ID JSON -- the SecretString the aws stub returns for that id.
+secret_fixture() {
+  local key
+
+  key="secret_$(printf '%s' "$1" | sed -e 's|[^A-Za-z0-9]|_|g')"
+  printf '%s' "$2" > "$BB_FIXTURES/${key}.body"
+}
+
+# wizard_rule -- the REPOSITORY_NAME_RULE most resolve_repository_name cases use:
+# a two-branch wizard (.NET / Node) with a free-name fallback for the branches
+# that ask for nothing else. It mirrors the shape of a real metadata
+# specification, so the cases read the way the wizard is filled in.
+wizard_rule() {
+  cat <<'JSON'
+{
+  "metadata_key": "application",
+  "root": "architecture",
+  "branches": {
+    ".NET": ["dotnet_type", "domain", "subdomain"],
+    "Node": ["node_type", "domain", "subdomain"]
+  },
+  "default": ["free_name"]
+}
+JSON
+}
+
+# wizard_metadata KEY=VALUE... -- an $APPLICATION document carrying those wizard
+# answers under the "application" metadata key.
+#
+# It carries a template_id because that is what a real creation looks like: the
+# console sets one whenever the application is created from a template, and its
+# absence is what marks an import. A case that wants the import path deletes it.
+wizard_metadata() {
+  local pairs="{}" pair
+
+  for pair in "$@"; do
+    pairs=$(jq -c --arg k "${pair%%=*}" --arg v "${pair#*=}" '. + {($k): $v}' <<<"$pairs")
+  done
+
+  jq -nc --argjson md "$pairs" '{repository_url: null, template_id: 1777342392, metadata: {application: $md}}'
+}

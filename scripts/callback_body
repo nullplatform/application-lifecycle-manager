@@ -1,0 +1,55 @@
+#!/bin/bash
+#
+# Collects the fields that entrypoint sends back as `callback_body` when it
+# closes the entity hook.
+#
+# Why a file. An application being created answers 403
+# ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING to `np application update` for a
+# while -- for every field and every identity, an organization admin key
+# included. Measured against a real hook, that window is narrow and lifts while
+# the application is still in `pending_hook`: the same PATCH succeeds seconds
+# later, and applies.
+#
+# So this is not the only way to write to the entity, and code that reconciles
+# the application late in the workflow does work. It is the way that does not
+# depend on when a step happens to run, which matters for the steps that run
+# first -- by the time the hook closes, the callback carries the fields and
+# nothing had to race the lock.
+#
+# Steps cannot export a value back to entrypoint -- it runs the workflow inside
+# a command substitution -- so they append to $ALM_CALLBACK_BODY_FILE and
+# entrypoint reads it once the workflow is done.
+#
+# Sourced, like every other script here: no `set -e`, messages to stdout.
+
+if ! type -t alm_callback_body_set >/dev/null 2>&1; then
+  # alm_callback_body_set KEY VALUE
+  #
+  # Merges one field into the callback body. A no-op when no file is configured,
+  # so a step can call it unconditionally and stay usable outside a hook run.
+  alm_callback_body_set() {
+    local key="$1" value="$2"
+    local current='{}'
+
+    if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+      return 0
+    fi
+
+    if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
+      current=$(cat "$ALM_CALLBACK_BODY_FILE")
+    fi
+
+    if ! printf '%s' "$current" \
+      | jq -c --arg k "$key" --arg v "$value" '. + {($k): $v}' > "$ALM_CALLBACK_BODY_FILE.tmp"; then
+      echo "WARNING: could not add '$key' to the callback body, leaving it out"
+      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+      return 1
+    fi
+
+    if ! mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"; then
+      echo "WARNING: could not update the callback body with '$key', leaving it out"
+      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+      return 1
+    fi
+  }
+fi

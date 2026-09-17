@@ -1,0 +1,27 @@
+#!/bin/bash
+# When the name came from metadata the application has no repository_url yet,
+# and it cannot be given one directly while it sits in pending_hook. The step
+# therefore hands the canonical URL to the callback body, which entrypoint sends
+# when it closes the hook.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+export CODE_REPOSITORY_STRATEGY="create"
+export TEMPLATE_URL="https://github.com/acme/dotnet-template"
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="net-app-fire-issuance"
+export REPOSITORY_NAME_DERIVED="true"
+
+fixture POST "/repos/acme/dotnet-template/generate" 201 '{"full_name":"acme/net-app-fire-issuance"}'
+
+run_code_repo_step github/create_repository
+assert_status 0 || exit 1
+
+got=$(jq -r '.repository_url // empty' "$ALM_CALLBACK_BODY_FILE" 2>/dev/null)
+
+if [[ "$got" != "https://github.com/acme/net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected the canonical URL in the callback body, got '$got'"
+  exit 1
+fi

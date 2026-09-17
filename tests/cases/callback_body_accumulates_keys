@@ -1,0 +1,26 @@
+#!/bin/bash
+# The workflow runs inside a command substitution in entrypoint, so a step
+# cannot export anything back to it. Steps that need to mutate the entity being
+# created hand their fields to a file instead, which entrypoint reads afterwards
+# and sends as callback_body -- the only way to write to an entity that is
+# frozen in pending_hook.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/callback_body"
+
+alm_callback_body_set repository_url "https://github.com/acme/net-app-fire-issuance"
+alm_callback_body_set repository_app_path "services/checkout"
+
+got=$(jq -S -c . "$ALM_CALLBACK_BODY_FILE" 2>&1)
+want='{"repository_app_path":"services/checkout","repository_url":"https://github.com/acme/net-app-fire-issuance"}'
+
+if [[ "$got" != "$want" ]]; then
+  echo "  FAIL: expected $want"
+  echo "        got      $got"
+  exit 1
+fi

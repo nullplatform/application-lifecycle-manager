@@ -1,0 +1,59 @@
+#!/bin/bash
+# Two ways a value that is present still cannot become part of a repository name,
+# and both used to get through.
+#
+#   - it slugs to nothing. The transliteration covers latin diacritics, so a value
+#     in another script, or one that is all punctuation, leaves an empty segment.
+#     For the root that produced names like "-widget", reported as a success.
+#   - it contains a control character. sed works line by line, so a newline is
+#     never one of the "non-alphanumerics" the slug collapses: it survives into
+#     the name and reaches the provider, which rejects it with a message about
+#     repository creation -- the very message this validation exists to replace.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+failed=0
+
+expect_rejected() {
+  local label="$1" needle="$2"; shift 2
+
+  unset REPOSITORY_NAME
+  export CODE_REPOSITORY_STRATEGY="create"
+  REPOSITORY_NAME_RULE=$(wizard_rule); export REPOSITORY_NAME_RULE
+  APPLICATION=$(wizard_metadata "$@"); export APPLICATION
+
+  run_code_repo_step resolve_repository_name
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL: $label should exit 1, got $STEP_STATUS"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+    return
+  fi
+  if [[ "$STEP_OUTPUT" != *"$needle"* ]]; then
+    echo "  FAIL: $label did not name the field:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+# The root, in a script the transliteration does not cover.
+expect_rejected "a root that slugs to nothing" "architecture" \
+  "architecture=日本語" dotnet_type=APP domain=fire subdomain=issuance
+
+# A branch field made only of punctuation.
+expect_rejected "a branch field that slugs to nothing" "domain" \
+  architecture=.NET dotnet_type=APP "domain=###" subdomain=issuance
+
+# A newline inside a value: survives the slug and reaches the provider.
+expect_rejected "a value with a newline" "domain" \
+  architecture=.NET dotnet_type=APP "domain=fire
+WATER" subdomain=issuance
+
+# And the same for the root.
+expect_rejected "a root with a newline" "architecture" \
+  "architecture=.NET
+X" dotnet_type=APP domain=fire subdomain=issuance
+
+exit "$failed"

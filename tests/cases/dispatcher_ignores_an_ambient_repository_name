@@ -1,0 +1,42 @@
+#!/bin/bash
+# The dispatcher must decide between the derived name and the URL by asking what
+# THIS run produced, never by looking at whether REPOSITORY_NAME happens to hold
+# something. Before the naming step existed the variable was overwritten
+# unconditionally, so an installation that carries one in its agent environment
+# -- for any unrelated reason -- used to be unaffected and must stay that way.
+#
+# Getting this wrong is silent and total: every repository in that installation
+# would be named the same.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME_RULE REPOSITORY_NAME_RULE_B64
+
+# Ambient, from the agent's environment, with no rule configured anywhere.
+export REPOSITORY_NAME="left-over-from-somewhere-else"
+
+GITHUB_SPEC_ID="1043b379-9fa8-4d2d-bc18-9c5b0d3038f2"
+export CODE_REPOSITORY_PROVIDER="github"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+export APPLICATION='{"repository_url":"https://github.com/acme/the-real-one","template_id":7,"metadata":{}}'
+
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+if [[ "\$1" == "provider" ]]; then
+  echo '{"results":[{"id":"cfg-1","specification_id":"$GITHUB_SPEC_ID","attributes":{"setup":{"organization":"acme"},"access":{}}}]}'
+else
+  echo '{}'
+fi
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+
+if [[ "$name" != "the-real-one" ]]; then
+  echo "  FAIL: an ambient REPOSITORY_NAME won over the application's URL. Got '$name'"
+  exit 1
+fi

@@ -1,0 +1,47 @@
+#!/bin/bash
+# A failed workflow may have got as far as deriving a name without creating the
+# repository. Merging that URL into the application would leave it pointing at
+# something that does not exist, so a failed hook closes with status only.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CALLBACK_URL="https://api.nullplatform.com/entity_hook/abc123"
+
+export NP_API_KEY="test-key"
+export NP_ACTION_CONTEXT="{\"notification\":{\"callback_url\":\"$CALLBACK_URL\",\"nrn\":\"organization=1:account=2:namespace=3:application=4\"}}"
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+echo '{"repository_url":"https://github.com/acme/net-app-fire-issuance"}' > "$ALM_CALLBACK_BODY_FILE"
+
+# np stub whose `service workflow exec` fails, so entrypoint reports "failed".
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1" == "service" ]]; then
+  echo "create_repository failed"
+  exit 1
+fi
+echo '{}'
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+fixture PATCH "$CALLBACK_URL" 200 ""
+
+(cd "$REPO_ROOT" && bash entrypoint) >/dev/null 2>&1
+
+body=$(request_body PATCH "$CALLBACK_URL")
+parsed=$(printf '%b' "$body")
+
+status=$(jq -r '.status // empty' <<<"$parsed" 2>/dev/null)
+if [[ "$status" != "failed" ]]; then
+  echo "  FAIL: expected status 'failed', got '$status'"
+  exit 1
+fi
+
+if jq -e 'has("callback_body")' <<<"$parsed" >/dev/null 2>&1; then
+  echo "  FAIL: a failed hook must not carry a callback_body:"
+  printf '%s\n' "$parsed" | sed 's/^/    /'
+  exit 1
+fi

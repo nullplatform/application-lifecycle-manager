@@ -2,19 +2,9 @@
 
 CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
 
-for var in GITHUB_APP_ID GITHUB_PRIVATE_KEY; do
-  if [[ -z "${!var}" ]]; then
-    echo "ERROR: $var is required for the GitHub code provider but is not set."
-    exit 1
-  fi
-done
-
-if [[ -n "$GITHUB_INSTALLATION_ID" ]]; then
-  echo "Using GITHUB_INSTALLATION_ID from environment: $GITHUB_INSTALLATION_ID"
-else
-  GITHUB_INSTALLATION_ID=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_id // empty')
-  echo "No GITHUB_INSTALLATION_ID in environment, using value from platform: $GITHUB_INSTALLATION_ID"
-fi
+# The account has two origins, the environment and the provider record; the
+# secret never supplies it. It is resolved first because the secret's id is
+# templated with it.
 
 if [[ -n "$GITHUB_ACCOUNT" ]]; then
   echo "Using GITHUB_ACCOUNT from environment: $GITHUB_ACCOUNT"
@@ -22,6 +12,38 @@ else
   GITHUB_ACCOUNT=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.organization // empty')
   echo "No GITHUB_ACCOUNT in environment, using value from platform: $GITHUB_ACCOUNT"
 fi
+
+# What the secret does supply -- the App credentials and the installation id --
+# has three origins, in this order:
+#
+#   environment  >  secret  >  provider record on the platform
+#
+# The environment is the operator's deliberate choice and the secret is
+# deliberate too, while the provider record is a shared default that is often
+# stale -- typically managed by someone else's terraform and pointing at whatever
+# App was installed first. So the secret is read BEFORE the provider record is
+# consulted, and the record only fills what is still empty afterwards.
+#
+# Reading the secret first also costs nothing when it is not configured.
+# shellcheck source=scripts/code-repo/github/resolve_app_credentials
+source "$CURRENT_DIR/resolve_app_credentials"
+
+if [[ -n "$GITHUB_INSTALLATION_ID" ]]; then
+  echo "Using GITHUB_INSTALLATION_ID: $GITHUB_INSTALLATION_ID"
+else
+  GITHUB_INSTALLATION_ID=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.installation_id // empty')
+  echo "No GITHUB_INSTALLATION_ID in the environment or the secret, using value from platform: $GITHUB_INSTALLATION_ID"
+fi
+
+# Two different origins, so two different messages. The App credentials never
+# come from the platform's provider record -- pointing someone at CODE_REPOSITORY
+# to find a private key sends them to a place that will never hold one.
+for var in GITHUB_APP_ID GITHUB_PRIVATE_KEY; do
+  if [[ -z "${!var}" ]]; then
+    echo "ERROR: $var is required for the GitHub code provider. Set it in the agent's environment, or supply it through GITHUB_APP_SECRET_ID."
+    exit 1
+  fi
+done
 
 for var in GITHUB_INSTALLATION_ID GITHUB_ACCOUNT; do
   if [[ -z "${!var}" ]]; then

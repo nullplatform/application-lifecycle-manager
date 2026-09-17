@@ -13,6 +13,11 @@ if workflow_skip_step CREATE_CODE_REPOSITORY createCodeRepository; then
   return 0
 fi
 
+# Must run before the name is read off the URL: when the name comes from the
+# metadata the developer filled in, the application has no repository_url yet.
+# shellcheck source=scripts/code-repo/resolve_repository_name
+source "$CURRENT_DIR/resolve_repository_name"
+
 REPOSITORY_URL=$(echo "$APPLICATION" | jq -r .repository_url)
 TEMPLATE_ID=$(echo "$APPLICATION" | jq -r '.template_id // empty' )
 
@@ -26,7 +31,14 @@ else
   CODE_REPOSITORY_STRATEGY=import
 fi
 
-REPOSITORY_NAME=$(basename "$REPOSITORY_URL")
+# Keyed on what THIS run produced, not on whether REPOSITORY_NAME happens to hold
+# something: before the naming step existed this variable was overwritten
+# unconditionally, so an installation that carries one in its agent environment
+# for any unrelated reason has to stay unaffected. Reading the value instead of
+# the marker would name every one of its repositories the same.
+if [[ "$REPOSITORY_NAME_DERIVED" != "true" ]]; then
+  REPOSITORY_NAME=$(basename "$REPOSITORY_URL")
+fi
 
 if [[ -n "$CODE_REPOSITORY_PROVIDER" ]]; then
   echo "Using CODE_REPOSITORY_PROVIDER from environment: $CODE_REPOSITORY_PROVIDER"
@@ -80,6 +92,21 @@ fi
 CODE_REPOSITORY=$(echo "$CODE_REPOSITORY_MATCHES" | jq '.[0]')
 
 echo "Using $CODE_REPOSITORY_PROVIDER code repository configuration: $(echo "$CODE_REPOSITORY" | jq -r '.id')"
+
+# Deriving the name is implemented for GitHub only: github/create_repository is
+# the one step that writes the derived URL back through the hook's callback body.
+# REPOSITORY_NAME itself is provider-agnostic, and this step runs before the
+# provider is known, so a rule left configured on an agent that talks to another
+# provider would take effect there with nothing to reconcile it: the repository
+# would be created under the derived name while the application kept the
+# console's repository_url, and since an application is resolved by an exact
+# match on that URL, the two would never meet again and nothing would report it.
+#
+# Refused here, before the workflow runs, so nothing is created to clean up.
+if [[ "$REPOSITORY_NAME_DERIVED" == "true" && "$CODE_REPOSITORY_PROVIDER" != "github" ]]; then
+  echo "ERROR: a repository name was derived from metadata, but that is only implemented for the github provider and this account uses '$CODE_REPOSITORY_PROVIDER'. Unset REPOSITORY_NAME_RULE (and REPOSITORY_NAME_RULE_B64) on the agent, or point it at a github account."
+  exit 1
+fi
 
 CODE_REPOSITORY_SCRIPT_PATH="scripts/code-repo/$CODE_REPOSITORY_PROVIDER"
 

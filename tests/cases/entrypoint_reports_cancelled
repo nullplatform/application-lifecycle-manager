@@ -1,0 +1,57 @@
+#!/bin/bash
+# A step that refused the operation records a reason and exits non-zero. The
+# non-zero exit is what stops the workflow, but the hook must not close as
+# `failed`: nothing broke, the request was refused. The reason has to reach the
+# developer, so it is prepended to the messages.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CALLBACK_URL="https://api.nullplatform.com/entity_hook/abc123"
+
+export NP_API_KEY="test-key"
+export NP_ACTION_CONTEXT="{\"notification\":{\"callback_url\":\"$CALLBACK_URL\",\"nrn\":\"organization=1:account=2:namespace=3:application=4\"}}"
+
+export ALM_CANCEL_FILE="$TEST_TMP/cancel.txt"
+printf '%s' "businessUnit 'Payments' requires an approver" > "$ALM_CANCEL_FILE"
+
+# A cancelling step also leaves a callback body behind if it ran after one that
+# wrote to it; a cancelled hook must not carry it either.
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+echo '{"repository_url":"https://github.com/acme/net-app-fire-issuance"}' > "$ALM_CALLBACK_BODY_FILE"
+
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1" == "service" ]]; then
+  echo "approve_creation refused the request"
+  exit 1
+fi
+echo '{}'
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+fixture PATCH "$CALLBACK_URL" 200 ""
+
+(cd "$REPO_ROOT" && bash entrypoint) >/dev/null 2>&1
+
+parsed=$(printf '%b' "$(request_body PATCH "$CALLBACK_URL")")
+
+status=$(jq -r '.status // empty' <<<"$parsed" 2>/dev/null)
+if [[ "$status" != "cancelled" ]]; then
+  echo "  FAIL: expected status 'cancelled', got '$status'"
+  printf '%s\n' "$parsed" | sed 's/^/    /'
+  exit 1
+fi
+
+if ! jq -e '[.messages[].message] | any(contains("requires an approver"))' <<<"$parsed" >/dev/null 2>&1; then
+  echo "  FAIL: the cancellation reason never reached the messages:"
+  printf '%s\n' "$parsed" | sed 's/^/    /'
+  exit 1
+fi
+
+if jq -e 'has("callback_body")' <<<"$parsed" >/dev/null 2>&1; then
+  echo "  FAIL: a cancelled hook must not carry a callback_body"
+  exit 1
+fi

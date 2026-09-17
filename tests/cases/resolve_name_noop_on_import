@@ -1,0 +1,31 @@
+#!/bin/bash
+# Import is told apart by the ABSENCE of a template_id, not by the presence of a
+# repository_url -- exactly how the dispatcher below decides between its `create`
+# and `import` strategies.
+#
+# The console fills repository_url in before the hook ever runs (it defaults to
+# <namespace-slug>-<application-slug>), so keying off that URL would mean the
+# derived name never wins and this step would silently do nothing.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+# No template_id: the application is importing a repository that already exists.
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.repository_url = "https://github.com/acme/legacy-service" | del(.template_id)')
+export APPLICATION
+
+run_code_repo_step resolve_repository_name
+assert_status 0 || exit 1
+assert_contains "legacy-service" || exit 1
+
+name=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+if [[ -n "$name" ]]; then
+  echo "  FAIL: expected REPOSITORY_NAME to stay unset for an import, got '$name'"
+  exit 1
+fi

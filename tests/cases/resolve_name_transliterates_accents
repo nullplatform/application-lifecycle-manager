@@ -1,0 +1,41 @@
+#!/bin/bash
+# The wizard's free-text fields are typed by Spanish-speaking developers, so they
+# carry ñ and accents. The slug keeps only [a-z0-9], and a multi-byte character
+# is several bytes, so without transliteration each one becomes a run of
+# separators: "Cañería" turned into "ca-er-a".
+#
+# GNU sed's y/// would do this in one pass, but the agent image ships busybox sed,
+# where y/// is byte-wise and corrupts the input outright. Per-character s/// is
+# what works on both.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(jq -nc '{metadata_key:"application", root:"architecture", branches:{}, default:["free_name"]}')
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+expect() {
+  local want="$1" value="$2" got
+
+  APPLICATION=$(wizard_metadata "architecture=SQL Data" "free_name=$value")
+  export APPLICATION
+
+  got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+  if [[ "$got" != "$want" ]]; then
+    echo "  FAIL: '$value' → expected '$want', got '$got'"
+    failed=1
+  fi
+}
+
+expect sql-data-caneria-nandu   "Cañería Ñandú"
+expect sql-data-modulo-creditos "Módulo Créditos"
+expect sql-data-poliza-vehiculo "Póliza Vehículo"
+expect sql-data-facturacion     "Facturación"
+expect sql-data-anos-guia       "Años Guía"
+
+exit "$failed"

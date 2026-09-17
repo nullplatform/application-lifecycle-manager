@@ -1,0 +1,33 @@
+#!/bin/bash
+# scaffold_repository is the second extension point, and ships doing nothing too.
+#
+# The window is the contract, not the exact line: it must run after the
+# repository exists and before the first build, so CI starts against a repository
+# that is already complete. Anywhere inside that window is fine.
+#
+# It sits directly under scripts/code-repo, not under $CODE_REPOSITORY_SCRIPT_PATH:
+# a provider-scoped slot would need a copy of this no-op per provider, and would
+# break GitLab and Bitbucket the moment one was missing.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+
+wf="$REPO_ROOT/workflows/create_code_repository.yaml"
+
+scaffold_at=$(grep -n 'scaffold_repository' "$wf" | head -1 | cut -d: -f1)
+create_at=$(grep -n '/create_repository' "$wf" | head -1 | cut -d: -f1)
+build_at=$(grep -n '/run_first_build' "$wf" | head -1 | cut -d: -f1)
+
+if [[ -z "$scaffold_at" ]]; then
+  echo "  FAIL: scaffold_repository is not wired into workflows/create_code_repository.yaml"
+  exit 1
+fi
+
+if [[ "$scaffold_at" -lt "$create_at" || "$scaffold_at" -gt "$build_at" ]]; then
+  echo "  FAIL: scaffold_repository must run after create_repository and before run_first_build."
+  echo "        create=$create_at scaffold=$scaffold_at build=$build_at"
+  exit 1
+fi

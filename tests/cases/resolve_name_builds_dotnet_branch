@@ -1,0 +1,22 @@
+#!/bin/bash
+# The .NET branch names the repository <architecture>-<type>-<domain>-<subdomain>.
+# The version is deliberately absent: moving an application from .NET 8 to .NET 10
+# must not force it to move to a different repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# setup() pre-exports REPOSITORY_NAME for the steps that consume it; this step is
+# the one that PRODUCES it, so it must start from nothing.
+unset REPOSITORY_NAME
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_version=8 dotnet_type=APP domain=fire subdomain=issuance)
+export REPOSITORY_NAME_RULE APPLICATION
+
+name=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$name" != "net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected 'net-app-fire-issuance', got '$name'"
+  exit 1
+fi
