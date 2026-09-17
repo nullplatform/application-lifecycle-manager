@@ -193,9 +193,10 @@ With that branch, `.NET`/`APP`/`glass`/`cancellation` gives `net-app-glass-cance
 same selections plus Experience `gpas` give `net-app-gpas-glass-cancellation`.
 
 Every value is slugified — accented latin characters transliterated (`Cañería` → `caneria`),
-lowercased, each run of non-alphanumerics collapsed to a single hyphen, edges trimmed — and the results are joined with hyphens. That absorbs the shapes a metadata wizard
-produces without needing a mapping table: `.NET` becomes `net`, `IAC Terraform` becomes
-`iac-terraform`, `Backend BFF` becomes `backend-bff`.
+lowercased, each run of non-alphanumerics collapsed to a single hyphen, edges trimmed — and the
+results are joined with hyphens. That absorbs the shapes a metadata wizard produces without needing
+a mapping table: `.NET` becomes `net`, `IAC Terraform` becomes `iac-terraform`, `Backend BFF`
+becomes `backend-bff`.
 
 With the rule above:
 
