@@ -30,14 +30,35 @@ fi
 if [[ -n "$TEMPLATE_ID" ]]; then
   CODE_REPOSITORY_STRATEGY=create
 
-  TEMPLATE_URL=$(np template read --id "$TEMPLATE_ID" --format json | jq -r .url)
+  # Checked rather than piped straight into jq. `np template read | jq -r .url`
+  # hides every failure: jq on empty input prints nothing and exits 0, so a
+  # template that does not resolve leaves TEMPLATE_URL empty and the assignment
+  # looks like it worked. Until now the id always came from the platform's own
+  # APPLICATION.template_id; CODE_REPOSITORY_DEFAULT_TEMPLATE_ID is typed by an
+  # operator, so a typo, a deleted template or a rendering artifact all reach
+  # here. What follows an empty TEMPLATE_URL is provider-shaped and none of it is
+  # good: Bitbucket creates the repository, leaves it empty, and closes the hook
+  # as `success`; GitHub's own guard misses the literal "null", because
+  # `cut -d'/' -f2` of `null` is `null`, and fails later against
+  # /repos/null/null/generate with a message about neither.
+  if ! TEMPLATE_RESPONSE=$(np template read --id "$TEMPLATE_ID" --format json); then
+    echo "ERROR: could not read template '$TEMPLATE_ID'. Response: $TEMPLATE_RESPONSE"
+    echo "If this id came from CODE_REPOSITORY_DEFAULT_TEMPLATE_ID, check that value on the agent."
+    exit 1
+  fi
+
+  TEMPLATE_URL=$(jq -r '.url // empty' <<<"$TEMPLATE_RESPONSE")
+
+  if [[ -z "$TEMPLATE_URL" ]]; then
+    echo "ERROR: template '$TEMPLATE_ID' resolved but carries no url. Response: $TEMPLATE_RESPONSE"
+    echo "If this id came from CODE_REPOSITORY_DEFAULT_TEMPLATE_ID, check that value on the agent."
+    exit 1
+  fi
 
   export TEMPLATE_URL
 else
   CODE_REPOSITORY_STRATEGY=import
 fi
-
-export CODE_REPOSITORY_STRATEGY
 
 # After the strategy is settled, because that is what decides whether a name has
 # to be derived at all, and before the name is read off the URL.

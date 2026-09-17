@@ -146,6 +146,36 @@ The code repository workflow is composed of the following tasks:
 - **Trigger initial CI build**  
   Optionally kicks off a first CI build so you can deploy your application immediately after creation.
 
+#### A default template for applications that carry none
+
+The dispatcher chooses between its `create` and `import` strategies by whether the application has
+a `template_id`. An installation that removes the template chooser from its console produces
+applications with none, which reads as "importing a repository that already exists" — the opposite
+of what is happening — and the run dies at `validate_repository_does_not_exist` on a repository
+nobody ever created.
+
+`CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` fills that gap. Set it on the agent and an application
+without a template is created from that one instead:
+
+```yaml
+extra_envs:
+  CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: "1855672260"
+```
+
+An application that carries its own `template_id` is never overridden. Unset, nothing changes.
+
+> **Setting this removes the import path for the whole installation.** The absence of a
+> `template_id` was the only signal the dispatcher had for "this application is importing an
+> existing repository", and the default gives that same absence a second meaning. The variable is
+> agent-level, not per-application, so once it is set **every** application resolves to `create`,
+> and one that points at a repository that already exists now fails at
+> `validate_repository_does_not_exist` with *"Repository already exists but strategy is set to
+> 'create'."* Leave it unset on installations that still import.
+
+The id is read at run time: a template that does not resolve, or one whose record carries no `url`,
+stops the workflow naming the id and the variable it came from. It is not validated when the agent
+starts, so a typo surfaces on the first application created after the change.
+
 #### Naming the repository from metadata
 
 By default the repository name is the last segment of the application's `repository_url`, which
@@ -213,8 +243,10 @@ segment would collapse into `net-app--issuance` and bake a name nobody can trace
 application, so failing is the safer outcome. Names over GitHub's 100 character limit are rejected
 the same way — the free-text branches make that limit reachable.
 
-Two cases are deliberately left alone: an application that already carries a `repository_url` (it
-is importing an existing repository), and any deployment with no `REPOSITORY_NAME_RULE` set.
+Two cases are deliberately left alone: an application whose strategy resolves to `import` (no
+`template_id` on the application **and** no `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` on the agent), and
+any deployment with no `REPOSITORY_NAME_RULE` set. The signal is the strategy, not the
+`repository_url` — the console fills that in for every application before the hook ever runs.
 
 > **The derived URL travels back in `callback_body`.** An application being created answers
 > `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` to `np application update` for a window at the

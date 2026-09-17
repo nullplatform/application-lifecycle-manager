@@ -31,6 +31,8 @@ cat > "$TEST_TMP/np" <<STUB
 printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
 if [[ "\$1" == "provider" ]]; then
   echo '{"results":[{"id":"cfg-1","specification_id":"$GITHUB_SPEC_ID","attributes":{"setup":{"organization":"acme"},"access":{}}}]}'
+elif [[ "\$1" == "template" ]]; then
+  echo '{"url":"https://github.com/acme/template-service"}'
 else
   echo '{}'
 fi
