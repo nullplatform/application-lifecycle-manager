@@ -175,8 +175,8 @@ Baking `gh` into the image skips all of this — the step notices it and does no
 person, and needs no manual token rotation — an installation token is minted per run and
 expires on its own. Install the App on your org and grant it repository **administration**,
 **contents**, **secrets**, and **actions** permissions. The agent host must have `curl`, `jq`, and
-`python3` with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI, which is
-installed automatically via `mise` when absent. GitHub.com only.
+`python3` with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI — see
+**Installing `gh`** above for how it gets there when the image does not ship it. GitHub.com only.
 
 ---
 

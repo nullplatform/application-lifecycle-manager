@@ -13,9 +13,11 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint
-        # Scoped to the files this plan adds or touches. The pre-existing
-        # gitlab/ scripts are NOT clean under shellcheck; fixing
-        # them is out of scope here and would bury this change in noise.
+        # Everything that passes, which is everything except one file:
+        # asset-repo/docker-server/generate_repository_uri trips SC2153
+        # (DOCKER_SERVER_URL against DOCKER_SERVER_URI). That is a pre-existing
+        # bug in another provider, and fixing it is a behaviour change that does
+        # not belong in this PR -- so it stays out, and this says why.
         #
         # SC1091: shellcheck cannot follow `source "$CURRENT_DIR/_api"`.
         # SC2154: the workflow engine supplies CODE_REPOSITORY_STRATEGY,
