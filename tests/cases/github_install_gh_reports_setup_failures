@@ -1,0 +1,59 @@
+#!/bin/bash
+# Three ways the fallback cannot proceed, each of which used to end somewhere
+# unhelpful:
+#
+#   - resolving the latest version fails. `curl -w '%{url_effective}'` prints the
+#     url it was GIVEN even when the request fails, so the emptiness guard never
+#     fired and the whole url became the version, ending in a 404 about a download.
+#   - the host is not Linux. gh publishes macOS builds as .zip under a different
+#     name, so the tarball url 404s with a generic message.
+#   - mktemp fails. An empty tmpdir turns `-o "$GH_TMP/gh.tar.gz"` into
+#     `-o /gh.tar.gz`, which as root can succeed.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+gh_install_sandbox || exit 1
+
+failed=0
+
+expect_failure() {
+  local label="$1" needle="$2"
+  run_code_repo_step github/install_gh
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL: $label should exit 1, got $STEP_STATUS"; failed=1; return
+  fi
+  if [[ "$STEP_OUTPUT" != *"$needle"* ]]; then
+    echo "  FAIL: $label did not mention '$needle':"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'; failed=1
+  fi
+}
+
+# 1. Cannot resolve the latest version: curl fails but still prints the url.
+unset GH_CLI_VERSION
+export GH_SANDBOX_CURL_FAIL=1
+expect_failure "a failed version resolution" "GH_CLI_VERSION"
+unset GH_SANDBOX_CURL_FAIL
+export GH_CLI_VERSION="2.101.0"
+
+# 2. A host that is not Linux.
+rm -f "$GH_SANDBOX_BIN/uname"
+# Single quotes on purpose: $1 belongs to the generated stub.
+# shellcheck disable=SC2016
+printf '#!/bin/bash\ncase "$1" in -s) echo Darwin ;; *) echo x86_64 ;; esac\n' > "$GH_SANDBOX_BIN/uname"
+chmod +x "$GH_SANDBOX_BIN/uname"
+expect_failure "a host that is not Linux" "Linux"
+
+rm -f "$GH_SANDBOX_BIN/uname"
+# shellcheck disable=SC2016
+printf '#!/bin/bash\ncase "$1" in -s) echo Linux ;; *) echo x86_64 ;; esac\n' > "$GH_SANDBOX_BIN/uname"
+chmod +x "$GH_SANDBOX_BIN/uname"
+
+# 3. mktemp cannot create the directory.
+rm -f "$GH_SANDBOX_BIN/mktemp"
+printf '#!/bin/bash\nexit 1\n' > "$GH_SANDBOX_BIN/mktemp"
+chmod +x "$GH_SANDBOX_BIN/mktemp"
+expect_failure "a failed mktemp" "temporary"
+
+exit "$failed"

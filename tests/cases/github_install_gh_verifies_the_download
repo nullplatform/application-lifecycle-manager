@@ -1,0 +1,25 @@
+#!/bin/bash
+# The reason this fallback exists is that mise's attestation check fails. Dropping
+# the tarball in without verifying it would answer a broken integrity check by
+# removing integrity checking -- for a binary that then acts with administration
+# rights over the organization's repositories.
+#
+# GitHub publishes gh_<version>_checksums.txt with every release, so the download
+# is checked against it and a mismatch installs nothing.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+gh_install_sandbox || exit 1
+
+export GH_SANDBOX_BAD_SUM="0000000000000000000000000000000000000000000000000000000000000000"
+
+run_code_repo_step github/install_gh
+
+assert_status 1 || exit 1
+assert_contains "checksum mismatch" || exit 1
+
+if [[ -e "$GH_SANDBOX_DEST/gh" ]]; then
+  echo "  FAIL: it installed a binary whose checksum did not match"
+  exit 1
+fi

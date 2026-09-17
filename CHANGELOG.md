@@ -7,7 +7,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+- GitHub: a failed `mise` no longer ends the workflow. `gh` is fetched from the release tarball
+  instead, into `GH_INSTALL_DIR`, and verified against the checksums GitHub publishes with the
+  release. mise's attestation check fails on the nullplatform agent image
+  even with working egress and an untouched rate limit, so every GitHub installation hit it on the
+  first application it created.
+- `capture_export` and `run_step` no longer collide with the script under test. They source it,
+  and bash scopes dynamically, so their `local var` was being overwritten by any step that loops
+  with `for var in ...` -- `github/build_context` does. The helper then read a different variable
+  and returned a plausible wrong value instead of failing.
+
 ### Added
+- A test suite for the GitHub code repository provider: 16 cases across all six of its steps,
+  where it previously had none. `tests/stubs/gh` resolves canned responses from the same fixtures
+  the curl stub uses, so a GitHub case is written the same way a Bitbucket one is.
 - Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses which pipeline file from the template is used, for templates that do not name it `bitbucket-pipelines.yml`.
 - Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build after a repository is created.
 

@@ -1,0 +1,28 @@
+#!/bin/bash
+# When the image already ships gh -- which is where this should end up -- the step
+# has to notice and stop. Reaching for mise anyway would spend a download, and on
+# the agent image it would fail and trigger a fallback nobody needed.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# setup() puts tests/stubs on PATH, and that is where the gh stub lives.
+if ! command -v gh >/dev/null 2>&1; then
+  echo "  FAIL: this case needs a gh on PATH to be meaningful"
+  exit 1
+fi
+
+run_code_repo_step github/install_gh
+assert_status 0 || exit 1
+
+if grep -q "^mise" "$BB_CALLS"; then
+  echo "  FAIL: it called mise even though gh was already there. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+if [[ -n "$STEP_OUTPUT" ]]; then
+  echo "  FAIL: expected no output when there is nothing to do, got:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+  exit 1
+fi

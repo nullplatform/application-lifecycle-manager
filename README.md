@@ -163,12 +163,20 @@ absent, read from the code repository configured in nullplatform — the same pr
 provider uses. Setting them in the environment overrides the platform values. The App credentials
 (`GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`) must always come from the environment.
 
+**Installing `gh`.** The agent host needs the `gh` CLI. When it is absent, `install_gh` tries `mise`
+first and falls back to fetching the release tarball into `GH_INSTALL_DIR` (default `~/.local/bin`).
+The fallback exists because mise's GitHub-attestation check fails on the nullplatform agent image
+even when the download succeeds and the host has egress, which every GitHub installation would
+otherwise hit on the first application it creates. `GH_CLI_VERSION` pins a version; without it the
+latest release is resolved from the `/releases/latest` redirect, which costs no API rate limit.
+Baking `gh` into the image skips all of this — the step notices it and does nothing.
+
 **Why a GitHub App (not a PAT):** the App is owned by the organization, is not tied to a
 person, and needs no manual token rotation — an installation token is minted per run and
 expires on its own. Install the App on your org and grant it repository **administration**,
 **contents**, **secrets**, and **actions** permissions. The agent host must have `curl`, `jq`, and
-`python3` with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI, which is
-installed automatically via `mise` when absent. GitHub.com only.
+`python3` with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI — see
+**Installing `gh`** above for how it gets there when the image does not ship it. GitHub.com only.
 
 ---
 

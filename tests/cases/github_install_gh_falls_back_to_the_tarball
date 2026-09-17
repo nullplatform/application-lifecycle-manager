@@ -1,0 +1,29 @@
+#!/bin/bash
+# mise is the documented way this repo gets `gh`, and it is broken on the
+# nullplatform agent image: its GitHub-attestation check fails with an HTTP error
+# even though the download itself works and the host has egress. Every GitHub
+# installation hits it on the first application it creates.
+#
+# So a failed mise is not fatal: the release tarball is fetched directly.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+gh_install_sandbox || exit 1
+
+if command -v gh >/dev/null 2>&1; then
+  echo "  FAIL: the sandbox still exposes a gh; the install branch would never run"
+  exit 1
+fi
+
+run_code_repo_step github/install_gh
+assert_status 0 || exit 1
+
+if [[ ! -x "$GH_SANDBOX_DEST/gh" ]]; then
+  echo "  FAIL: gh was not installed into GH_INSTALL_DIR"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+  exit 1
+fi
+
+assert_contains "mise" || exit 1
+assert_contains "checksum verified" || exit 1

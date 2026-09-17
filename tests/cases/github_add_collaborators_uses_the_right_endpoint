@@ -1,0 +1,25 @@
+#!/bin/bash
+# Users and teams are granted through two different GitHub endpoints, and getting
+# them crossed fails silently against a 404. An unrecognised type warns rather
+# than guessing.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="my-service"
+export CODE_REPOSITORY_COLLABORATORS='[
+  {"id":"jane","role":"push","type":"user"},
+  {"id":"platform","role":"admin","type":"team"},
+  {"id":"mystery","role":"push","type":"robot"}
+]'
+
+fixture PUT "/repos/acme/my-service/collaborators/jane" 204 ''
+fixture PUT "/orgs/acme/teams/platform/repos/acme/my-service" 204 ''
+
+run_code_repo_step github/add_collaborators
+assert_status 0 || exit 1
+
+assert_called PUT "/repos/acme/my-service/collaborators/jane" || exit 1
+assert_called PUT "/orgs/acme/teams/platform/repos/acme/my-service" || exit 1
+assert_contains "unknown collaborator type 'robot'" || exit 1

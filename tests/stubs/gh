@@ -1,0 +1,99 @@
+#!/bin/bash
+# Fixture-driven `gh` CLI stub used by tests/run.
+#
+# Resolves a canned response by METHOD + endpoint path from $BB_FIXTURES -- the
+# same keys tests/lib.sh's `fixture` helper writes, so GitHub cases stub the same
+# way Bitbucket ones do -- and records every invocation in $BB_CALLS.
+#
+# Shapes honoured, all of them taken from scripts/code-repo/github:
+#   gh api PATH                         GET
+#   gh api --method POST PATH -f k=v    POST/PUT, form fields ignored
+#   gh api PATH --jq EXPR               body filtered through jq, like real gh
+#   gh secret set NAME --repo O/R       value on stdin; keyed as PUT /secrets/NAME
+#
+# Unlike curl, `gh` signals HTTP errors through its EXIT STATUS, which is what
+# validate_repository_does_not_exist reads. So a fixture whose code is >= 400,
+# and any call with no fixture at all, exits non-zero.
+
+method="GET"
+path=""
+jq_expr=""
+subcommand="$1"
+
+printf 'gh\t%s\n' "$*" >> "$BB_CALLS"
+
+# `gh --version` is not an API call, and install_gh runs it to decide whether gh
+# is usable -- `command -v` only answers whether a file exists, not whether it can
+# be executed. Answering it here is what makes the stub a usable gh.
+if [[ "$1" == "--version" || "$1" == "version" ]]; then
+  echo "gh version 2.101.0 (stub)"
+  exit 0
+fi
+
+if [[ -n "$GH_STUB_FAIL" ]]; then
+  echo "gh: simulated failure" >&2
+  exit 1
+fi
+
+if [[ "$subcommand" == "secret" && "$2" == "set" ]]; then
+  # The value is piped in, never passed on argv -- record it so a test can assert
+  # what was actually stored.
+  value=$(cat)
+  printf 'gh-secret\t%s\t%s\n' "$3" "$value" >> "$BB_CALLS"
+
+  method="PUT"
+  path="/secrets/$3"
+else
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --method) method="$2"; shift 2 ;;
+      --jq) jq_expr="$2"; shift 2 ;;
+      -f|-F|-H) shift 2 ;;
+      api) shift ;;
+      /*) path="$1"; shift ;;
+      *) shift ;;
+    esac
+  done
+fi
+
+# Also record in the curl stub's TSV shape, so assert_called works the same way
+# whichever client a provider happens to use.
+printf '%s\t%s\t\t\n' "$method" "$path" >> "$BB_CALLS"
+
+key="${method}_$(printf '%s' "$path" | sed -e 's|[^A-Za-z0-9]|_|g')"
+
+count_file="$BB_FIXTURES/.count_${key}"
+n=1
+if [[ -f "$count_file" ]]; then
+  n=$(( $(cat "$count_file") + 1 ))
+fi
+printf '%s' "$n" > "$count_file"
+
+code_file="$BB_FIXTURES/${key}.${n}.code"
+body_file="$BB_FIXTURES/${key}.${n}.body"
+
+if [[ ! -f "$code_file" ]]; then
+  code_file="$BB_FIXTURES/${key}.code"
+  body_file="$BB_FIXTURES/${key}.body"
+fi
+
+if [[ ! -f "$code_file" ]]; then
+  echo "gh: no fixture for $method $path" >&2
+  exit 1
+fi
+
+code=$(cat "$code_file")
+body=""
+[[ -f "$body_file" ]] && body=$(cat "$body_file")
+
+if [[ -n "$jq_expr" ]]; then
+  printf '%s' "$body" | jq -r "$jq_expr" 2>/dev/null
+else
+  printf '%s' "$body"
+fi
+
+if [[ "$code" -ge 400 ]]; then
+  exit 1
+fi
+
+exit 0
