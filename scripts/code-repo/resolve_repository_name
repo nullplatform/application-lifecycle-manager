@@ -20,10 +20,19 @@ RESOLVE_RULE_SOURCE="REPOSITORY_NAME_RULE"
 if [[ -z "$REPOSITORY_NAME_RULE" && -n "${REPOSITORY_NAME_RULE_B64:-}" ]]; then
   RESOLVE_RULE_SOURCE="REPOSITORY_NAME_RULE_B64"
 
-  # base64 implementations disagree about junk input: some fail, busybox and the
-  # macOS one happily emit binary. So the decode is not the check -- the JSON
-  # validation below is, and it reports whichever variable the rule came from.
+  # base64 implementations disagree about junk, and they disagree differently:
+  # busybox exits 0 on input the others reject, macOS exits 0 on input GNU
+  # rejects, and all three can emit nothing at all. So the exit status is not the
+  # check -- an empty decode is. The variable was set, so something was meant to
+  # be there; nothing came out, so it is corrupt. Without this the empty result
+  # falls through to the "not configured" branch below and the repository quietly
+  # takes the console's default name.
   REPOSITORY_NAME_RULE=$(printf '%s' "$REPOSITORY_NAME_RULE_B64" | base64 -d 2>/dev/null)
+
+  if [[ -z "$REPOSITORY_NAME_RULE" ]]; then
+    echo "ERROR: REPOSITORY_NAME_RULE_B64 is set but decodes to nothing. Check the base64 is intact and single-line."
+    exit 1
+  fi
 fi
 
 if [[ -z "$REPOSITORY_NAME_RULE" ]]; then
@@ -95,11 +104,65 @@ resolve_slug() {
     | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
 }
 
-RESOLVE_METADATA_KEY=$(jq -r '.metadata_key' <<<"$REPOSITORY_NAME_RULE")
-RESOLVE_ROOT_FIELD=$(jq -r '.root' <<<"$REPOSITORY_NAME_RULE")
+# The rule is written by whoever configures the agent, and the developer creating
+# an application cannot see it. So every shape problem in it has to say so:
+# `jq -r` on a missing key yields the STRING "null", which used to be looked up as
+# a metadata field and reported as the developer's missing answer.
+# Checked inline rather than through a helper: a helper that both echoes the
+# value and reports the error has to run in a command substitution, and there its
+# error message is captured into the variable instead of reaching the log.
+RESOLVE_METADATA_KEY=$(jq -r 'if (.metadata_key | type) == "string" then .metadata_key else empty end' <<<"$REPOSITORY_NAME_RULE")
+
+if [[ -z "$RESOLVE_METADATA_KEY" ]]; then
+  echo "ERROR: the naming rule needs a non-empty string 'metadata_key'. Check REPOSITORY_NAME_RULE on the agent."
+  exit 1
+fi
+
+RESOLVE_ROOT_FIELD=$(jq -r 'if (.root | type) == "string" then .root else empty end' <<<"$REPOSITORY_NAME_RULE")
+
+if [[ -z "$RESOLVE_ROOT_FIELD" ]]; then
+  echo "ERROR: the naming rule needs a non-empty string 'root'. Check REPOSITORY_NAME_RULE on the agent."
+  exit 1
+fi
+
+RESOLVE_BRANCHES_TYPE=$(jq -r '.branches | type' <<<"$REPOSITORY_NAME_RULE" 2>/dev/null)
+
+if [[ "$RESOLVE_BRANCHES_TYPE" != "object" && "$RESOLVE_BRANCHES_TYPE" != "null" ]]; then
+  echo "ERROR: the naming rule's 'branches' is a $RESOLVE_BRANCHES_TYPE; it has to be an object keyed by the root's values."
+  exit 1
+fi
+
+# A value can be present and still be unusable. Both checks apply to the root and
+# to every branch field, so they live here.
+resolve_reject_unusable() {
+  local field="$1" value="$2" segment="$3"
+
+  # sed works line by line, so a newline is never one of the "non-alphanumerics"
+  # the slug collapses: it survives into the name and reaches the provider, which
+  # rejects it with a message about repository creation -- the message this whole
+  # validation exists to replace.
+  if [[ "$value" == *[[:cntrl:]]* ]]; then
+    echo "ERROR: the metadata field '$field' contains a control character, so it cannot become part of a repository name."
+    exit 1
+  fi
+
+  # The transliteration covers latin diacritics; a value in another script, or one
+  # that is all punctuation, slugs to nothing and used to leave an empty segment.
+  if [[ -z "$segment" ]]; then
+    echo "ERROR: the metadata field '$field' has the value '$value', which leaves nothing usable in a repository name."
+    exit 1
+  fi
+}
 
 RESOLVE_VALUES=$(jq -c --arg k "$RESOLVE_METADATA_KEY" '.metadata[$k] // {}' <<<"$APPLICATION")
-RESOLVE_ROOT_VALUE=$(jq -r --arg f "$RESOLVE_ROOT_FIELD" '.[$f] // empty' <<<"$RESOLVE_VALUES")
+
+# `// empty` treats false as absent, so a wizard toggle answered "no" read as
+# unanswered and stopped the hook. Only null means unanswered.
+resolve_metadata_value() {
+  jq -r --arg f "$1" '.[$f] | if . == null then empty else tostring end' <<<"$RESOLVE_VALUES"
+}
+
+RESOLVE_ROOT_VALUE=$(resolve_metadata_value "$RESOLVE_ROOT_FIELD")
 
 # Without the root value there is no branch to pick, and the default branch
 # would blame whichever field it asks for first. Blame the root field instead.
@@ -108,7 +171,35 @@ if [[ -z "$RESOLVE_ROOT_VALUE" ]]; then
   exit 1
 fi
 
+# Resolved before the loop, and its shape checked, because the list used to be
+# produced inside the here-string of the `while`: jq's failure went to stderr,
+# its status died inside $( ), the loop never ran, and the name came out as the
+# root's slug alone -- printed as a success, with the repository created under it.
+RESOLVE_BRANCH_TYPE=$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '(.branches[$r] // .default) | type' <<<"$REPOSITORY_NAME_RULE" 2>/dev/null)
+
+case "$RESOLVE_BRANCH_TYPE" in
+  array) ;;
+  null|"")
+    echo "ERROR: the naming rule has no branch for '$RESOLVE_ROOT_FIELD' = '$RESOLVE_ROOT_VALUE', and no 'default'. Add one, or add a default."
+    exit 1
+    ;;
+  *)
+    echo "ERROR: the naming rule's branch for '$RESOLVE_ROOT_VALUE' is a $RESOLVE_BRANCH_TYPE; it has to be a list of metadata field names."
+    exit 1
+    ;;
+esac
+
+# `.[]` over an object is valid jq -- it iterates the VALUES -- so a branch
+# written as an object used to ask for whatever those values happened to spell.
+if [[ "$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '[(.branches[$r] // .default)[] | select(type != "string")] | length' <<<"$REPOSITORY_NAME_RULE")" != "0" ]]; then
+  echo "ERROR: the naming rule's branch for '$RESOLVE_ROOT_VALUE' has entries that are not strings; every entry has to be a metadata field name."
+  exit 1
+fi
+
+RESOLVE_FIELDS=$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '(.branches[$r] // .default)[]' <<<"$REPOSITORY_NAME_RULE")
+
 RESOLVE_NAME=$(resolve_slug "$RESOLVE_ROOT_VALUE")
+resolve_reject_unusable "$RESOLVE_ROOT_FIELD" "$RESOLVE_ROOT_VALUE" "$RESOLVE_NAME"
 
 while read -r resolve_field; do
   [[ -z "$resolve_field" ]] && continue
@@ -133,8 +224,15 @@ while read -r resolve_field; do
     exit 1
   fi
 
-  resolve_value=$(jq -r --arg f "$resolve_field" '.[$f] // empty' <<<"$RESOLVE_VALUES")
+  resolve_value=$(resolve_metadata_value "$resolve_field")
   resolve_segment=$(resolve_slug "$resolve_value")
+
+  # Absent is what "optional" is about. Present but unusable is a different thing
+  # and is always an error, optional or not -- skipping it would silently drop an
+  # answer the developer gave.
+  if [[ -n "$resolve_value" ]]; then
+    resolve_reject_unusable "$resolve_field" "$resolve_value" "$resolve_segment"
+  fi
 
   if [[ -z "$resolve_segment" ]]; then
     if [[ "$resolve_optional" -eq 1 ]]; then
@@ -150,7 +248,7 @@ while read -r resolve_field; do
   fi
 
   RESOLVE_NAME="$RESOLVE_NAME-$resolve_segment"
-done <<<"$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '(.branches[$r] // .default)[]' <<<"$REPOSITORY_NAME_RULE")"
+done <<<"$RESOLVE_FIELDS"
 
 # The slug already guarantees GitHub's charset ([a-z0-9-]); the length is the
 # part a free-text metadata field can still blow past. Failing here names the

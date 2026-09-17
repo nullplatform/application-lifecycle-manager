@@ -17,12 +17,28 @@ CALLBACK_URL=$(echo "$NP_ACTION_CONTEXT" | jq -r .notification.callback_url)
 # entity being created append their fields to this file instead. It is the only
 # way in: an application held in pending_hook rejects `np application update`
 # with 403 regardless of identity. See scripts/callback_body.
-ALM_CALLBACK_BODY_FILE="${ALM_CALLBACK_BODY_FILE:-$(mktemp)}"
+# Removed on the way out. This script runs once per notification on an agent that
+# stays up, so without it every application created leaves two files behind for
+# the life of the pod. A trap is safe HERE, unlike in the steps: this script is
+# executed, so the trap belongs to it and fires when it ends.
+#
+# Only what this script created: a caller that supplied the paths owns them.
+ALM_TEMP_FILES=()
+alm_cleanup() { [[ ${#ALM_TEMP_FILES[@]} -gt 0 ]] && rm -f "${ALM_TEMP_FILES[@]}"; }
+trap alm_cleanup EXIT
+
+if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+  ALM_CALLBACK_BODY_FILE=$(mktemp)
+  ALM_TEMP_FILES+=("$ALM_CALLBACK_BODY_FILE")
+fi
 export ALM_CALLBACK_BODY_FILE
 
 # Same channel, for a step that refuses the operation rather than fails at it.
 # See scripts/cancel.
-ALM_CANCEL_FILE="${ALM_CANCEL_FILE:-$(mktemp)}"
+if [[ -z "${ALM_CANCEL_FILE:-}" ]]; then
+  ALM_CANCEL_FILE=$(mktemp)
+  ALM_TEMP_FILES+=("$ALM_CANCEL_FILE")
+fi
 export ALM_CANCEL_FILE
 
 logs=$(np service workflow exec --workflow workflows/create_app.yaml)

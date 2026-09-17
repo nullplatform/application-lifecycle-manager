@@ -28,8 +28,9 @@
 #
 # stdout becomes the hook's messages.
 #
-# To write a field back to the application, use the callback body. `np application
-# update` answers 403 here: the entity is frozen until the hook closes.
+# To write a field back to the application, use the callback body rather than
+# `np application update`: an application being created answers 403 to that for a
+# window at the start of the hook, and the callback does not have to race it.
 #
 #   SCAFFOLD_DIR=$(dirname "${BASH_SOURCE[0]}")
 #   # shellcheck source=scripts/callback_body

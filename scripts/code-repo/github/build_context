@@ -2,7 +2,19 @@
 
 CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
 
-# Three origins, in this order:
+# The account has two origins, the environment and the provider record; the
+# secret never supplies it. It is resolved first because the secret's id is
+# templated with it.
+
+if [[ -n "$GITHUB_ACCOUNT" ]]; then
+  echo "Using GITHUB_ACCOUNT from environment: $GITHUB_ACCOUNT"
+else
+  GITHUB_ACCOUNT=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.organization // empty')
+  echo "No GITHUB_ACCOUNT in environment, using value from platform: $GITHUB_ACCOUNT"
+fi
+
+# What the secret does supply -- the App credentials and the installation id --
+# has three origins, in this order:
 #
 #   environment  >  secret  >  provider record on the platform
 #
@@ -13,15 +25,6 @@ CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
 # consulted, and the record only fills what is still empty afterwards.
 #
 # Reading the secret first also costs nothing when it is not configured.
-
-if [[ -n "$GITHUB_ACCOUNT" ]]; then
-  echo "Using GITHUB_ACCOUNT from environment: $GITHUB_ACCOUNT"
-else
-  GITHUB_ACCOUNT=$(echo "$CODE_REPOSITORY" | jq -r '.attributes.setup.organization // empty')
-  echo "No GITHUB_ACCOUNT in environment, using value from platform: $GITHUB_ACCOUNT"
-fi
-
-# Needs the account, because the secret id is templated with it.
 # shellcheck source=scripts/code-repo/github/resolve_app_credentials
 source "$CURRENT_DIR/resolve_app_credentials"
 

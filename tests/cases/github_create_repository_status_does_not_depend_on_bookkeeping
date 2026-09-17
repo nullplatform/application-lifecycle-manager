@@ -1,0 +1,55 @@
+#!/bin/bash
+# This step is sourced, so whatever its last statement evaluates to becomes the
+# step's status. Before the callback-body write was added it ended on an echo and
+# always returned 0, like every other provider's create_repository.
+#
+# Left as the last statement, the write decides the step's fate in the worst
+# possible place: after the repository exists. Either the workflow aborts on a
+# bookkeeping failure -- no collaborators, no CI secret, no build, hook closed
+# `failed`, and since entrypoint only attaches callback_body on success the URL is
+# lost too -- or, if the engine ignores the status, the hook closes `success` with
+# the URL silently missing, because entrypoint turns an empty callback file into a
+# no-op without a word.
+#
+# So: the status is explicit, and a derived name that did not reach the callback
+# body is an error that names the repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export CODE_REPOSITORY_STRATEGY="create"
+export TEMPLATE_URL="https://github.com/acme/tpl"
+export GITHUB_ACCOUNT="acme"
+export REPOSITORY_NAME="net-app-fire-issuance"
+
+failed=0
+
+# 1. Nothing derived: the step must still end on a success, not on the condition.
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/cb.json"
+unset REPOSITORY_NAME_DERIVED
+fixture POST "/repos/acme/tpl/generate" 201 '{}'
+run_code_repo_step github/create_repository
+[[ "$STEP_STATUS" == 0 ]] || { echo "  FAIL: without a derived name the step should return 0, got $STEP_STATUS"; failed=1; }
+
+# 2. Derived and written: success, and the URL is in the body.
+rm -f "$ALM_CALLBACK_BODY_FILE"
+export REPOSITORY_NAME_DERIVED="true"
+run_code_repo_step github/create_repository
+[[ "$STEP_STATUS" == 0 ]] || { echo "  FAIL: the happy path should return 0, got $STEP_STATUS"; failed=1; }
+[[ "$(jq -r '.repository_url // empty' "$ALM_CALLBACK_BODY_FILE" 2>/dev/null)" == "https://github.com/acme/net-app-fire-issuance" ]] \
+  || { echo "  FAIL: the URL did not reach the callback body"; failed=1; }
+
+# 3. Derived but the write cannot land: must fail, and name the repository.
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/no-such-dir/cb.json"
+run_code_repo_step github/create_repository
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: a derived name that did not reach the callback body should exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"could not be recorded"* ]]; then
+  echo "  FAIL: the failure was incidental, not an explicit check that the URL landed:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"

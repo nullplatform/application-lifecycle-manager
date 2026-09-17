@@ -24,9 +24,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   name still comes from the application's `repository_url`. `REPOSITORY_NAME_RULE_B64` carries the
   same document base64-encoded, for deployments that cannot put double quotes in an environment
   variable. A field name ending in `?` is optional and leaves no trace when blank.
-- The hook callback now carries a `callback_body`, the only way to write to an application held in
-  `pending_hook`. A derived `repository_url` reaches the entity through it; a failed or cancelled
-  hook sends none.
+- The hook callback now carries a `callback_body`, which writes to the application without racing
+  the 403 window an application being created answers to `np application update`. A derived
+  `repository_url` reaches the entity through it; a failed or cancelled hook sends none.
 - `alm_cancel` closes the hook as `cancelled` instead of `failed`, for a step that refuses an
   operation rather than breaks on it. The reason is reported to the developer.
 - Two extension points that ship doing nothing: `approve_creation`, before anything is created, and

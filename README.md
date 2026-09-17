@@ -215,14 +215,17 @@ the same way — the free-text branches make that limit reachable.
 Two cases are deliberately left alone: an application that already carries a `repository_url` (it
 is importing an existing repository), and any deployment with no `REPOSITORY_NAME_RULE` set.
 
-> **The derived URL travels back in `callback_body`.** An application held in `pending_hook` is
-> frozen: `np application update` answers `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` for every
-> field and every identity, an organization admin key included. That is a state lock, not a
-> permission problem. So once the repository exists its canonical URL is placed in the
-> `callback_body` of the `PATCH` that closes the hook — the only write the platform accepts at that
-> point — and nullplatform merges it into the entity as it resumes. A failed hook closes with a
-> status and no `callback_body`, because a run that stopped before creating the repository must not
-> leave the application pointing at something that does not exist.
+> **The derived URL travels back in `callback_body`.** An application being created answers
+> `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` to `np application update` for a window at the
+> start of the hook — for every field and every identity, an organization admin key included. That
+> is a state lock, not a permission problem, and it is narrow: measured against a real hook it lifts
+> while the application is still in `pending_hook`, and the same `PATCH` then succeeds and applies.
+> So the callback is not the only write the platform accepts, it is the one that does not depend on
+> when a step happens to run. Once the repository exists its canonical URL is placed in the
+> `callback_body` of the `PATCH` that closes the hook, and nullplatform merges it into the entity as
+> it resumes. A failed hook closes with a status and no `callback_body`, because a run that stopped
+> before creating the repository must not leave the application pointing at something that does not
+> exist.
 
 #### Using GitHub
 

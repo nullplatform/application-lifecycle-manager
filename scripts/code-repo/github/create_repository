@@ -27,14 +27,32 @@ fi
 
 echo "Repository created: $GITHUB_ACCOUNT/$REPOSITORY_NAME"
 
-# A name derived from metadata reaches an application that is frozen in
-# pending_hook only through the hook's callback_body -- `np application update`
-# answers 403 there. See scripts/callback_body.
+# A name derived from metadata reaches the application through the hook's
+# callback_body. See scripts/callback_body for why that rather than
+# `np application update`.
 if [[ "$REPOSITORY_NAME_DERIVED" == "true" ]]; then
+  GITHUB_CREATE_URL="https://github.com/$GITHUB_ACCOUNT/$REPOSITORY_NAME"
   GITHUB_CREATE_DIR=$(dirname "${BASH_SOURCE[0]}")
 
   # shellcheck source=scripts/callback_body
   source "$GITHUB_CREATE_DIR/../../callback_body"
 
-  alm_callback_body_set repository_url "https://github.com/$GITHUB_ACCOUNT/$REPOSITORY_NAME"
+  alm_callback_body_set repository_url "$GITHUB_CREATE_URL"
+
+  # Checked rather than trusted. Nothing else in this workflow carries the
+  # derived name to the application, and its absence is silent at every later stage:
+  # entrypoint turns an empty callback file into a no-op without a word, so the
+  # hook would close `success` with the application pointing at a repository that
+  # is not the one just created -- and since applications are resolved by an exact
+  # match on that URL, nothing would ever reconcile them.
+  if [[ "$(jq -r '.repository_url // empty' "${ALM_CALLBACK_BODY_FILE:-/dev/null}" 2>/dev/null)" != "$GITHUB_CREATE_URL" ]]; then
+    echo "ERROR: $GITHUB_ACCOUNT/$REPOSITORY_NAME was created, but its URL could not be recorded for the application. Failing here rather than leaving the application pointing somewhere else."
+    exit 1
+  fi
 fi
+
+# Explicit, so the step's status is a decision and not whatever the last
+# statement happened to evaluate to. Every other provider's create_repository
+# ends on an export or an echo and returns 0; this one grew a conditional at the
+# end, which made a bookkeeping write decide the fate of the whole workflow.
+return 0

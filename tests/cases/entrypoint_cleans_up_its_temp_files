@@ -1,0 +1,63 @@
+#!/bin/bash
+# entrypoint runs once per notification on an agent that stays up, so anything it
+# leaves in /tmp accumulates for the life of the pod -- two files per application
+# created. Here a trap is safe, unlike in the steps: this script is executed, not
+# sourced, so the trap belongs to it and fires when it ends.
+#
+# It must only remove what it created. A caller that supplied the paths owns them.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CALLBACK_URL="https://api.nullplatform.com/entity_hook/abc123"
+export NP_API_KEY="test-key"
+export NP_ACTION_CONTEXT="{\"notification\":{\"callback_url\":\"$CALLBACK_URL\",\"nrn\":\"organization=1:account=2:namespace=3:application=4\"}}"
+fixture PATCH "$CALLBACK_URL" 200 ""
+
+failed=0
+
+# 1. Paths it created itself: gone afterwards.
+#
+# Observed through a stubbed mktemp rather than TMPDIR: GNU mktemp honours that
+# variable and the macOS one ignores it, so a TMPDIR-based check would pass on CI
+# and fail on a developer's machine. Counting /tmp is no good either -- other
+# processes write there while the test runs.
+unset ALM_CALLBACK_BODY_FILE ALM_CANCEL_FILE
+mkdir -p "$TEST_TMP/tmpdir"
+
+# The real mktemp by absolute path: `command mktemp` would not do, because
+# `command` skips functions and aliases but still searches PATH -- and PATH finds
+# this stub first, so it would call itself until the process table gives out.
+REAL_MKTEMP=$(command -v mktemp)
+
+cat > "$TEST_TMP/mktemp" <<STUB
+#!/bin/bash
+printf '%s' "\$("$REAL_MKTEMP" "$TEST_TMP/tmpdir/tmp.XXXXXX")"
+STUB
+chmod +x "$TEST_TMP/mktemp"
+
+(cd "$REPO_ROOT" && PATH="$TEST_TMP:$PATH" bash entrypoint) >/dev/null 2>&1
+
+left=$(find "$TEST_TMP/tmpdir" -type f | wc -l | tr -d ' ')
+if [[ "$left" != "0" ]]; then
+  echo "  FAIL: it left $left file(s) behind:"
+  find "$TEST_TMP/tmpdir" -type f | sed 's/^/        /'
+  failed=1
+fi
+
+# 2. Paths the caller supplied: left alone, they are not ours.
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/mine-callback.json"
+export ALM_CANCEL_FILE="$TEST_TMP/mine-cancel.txt"
+echo '{}' > "$ALM_CALLBACK_BODY_FILE"
+: > "$ALM_CANCEL_FILE"
+
+(cd "$REPO_ROOT" && bash entrypoint) >/dev/null 2>&1
+
+for f in "$ALM_CALLBACK_BODY_FILE" "$ALM_CANCEL_FILE"; do
+  if [[ ! -e "$f" ]]; then
+    echo "  FAIL: it deleted a file the caller supplied: $f"
+    failed=1
+  fi
+done
+
+exit "$failed"

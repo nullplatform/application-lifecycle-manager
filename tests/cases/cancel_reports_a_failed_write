@@ -1,0 +1,28 @@
+#!/bin/bash
+# The cancel file is the only channel: entrypoint decides between `failed` and
+# `cancelled` by whether it has content. A write that fails silently turns a
+# refusal into a failure -- the developer is told something broke, when in fact
+# their request was understood and declined.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/cancel"
+
+# A path that cannot be written: the directory does not exist.
+export ALM_CANCEL_FILE="$TEST_TMP/no-such-dir/cancel.txt"
+
+out=$(alm_cancel "businessUnit 'Payments' requires an approver" 2>&1)
+status=$?
+
+if [[ "$status" == 0 ]]; then
+  echo "  FAIL: a failed write should be reported, got status 0"
+  exit 1
+fi
+
+if [[ "$out" != *ERROR* ]]; then
+  echo "  FAIL: the failed write was not reported:"
+  printf '%s\n' "$out" | sed 's/^/    /'
+  exit 1
+fi
