@@ -12,6 +12,10 @@ trap teardown EXIT
 
 unset REPOSITORY_NAME
 
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
 REPOSITORY_NAME_RULE=$(wizard_rule)
 export REPOSITORY_NAME_RULE
 

@@ -1,7 +1,7 @@
 #!/bin/bash
-# Import is told apart by the ABSENCE of a template_id, not by the presence of a
-# repository_url -- exactly how the dispatcher below decides between its `create`
-# and `import` strategies.
+# Only a repository being created gets a derived name. The step asks the
+# dispatcher's strategy rather than working it out from the application, because
+# the dispatcher also applies the default template.
 #
 # The console fills repository_url in before the hook ever runs (it defaults to
 # <namespace-slug>-<application-slug>), so keying off that URL would mean the
@@ -11,6 +11,9 @@ setup
 trap teardown EXIT
 
 unset REPOSITORY_NAME
+
+# What the dispatcher settles for an application that is importing.
+export CODE_REPOSITORY_STRATEGY="import"
 
 REPOSITORY_NAME_RULE=$(wizard_rule)
 export REPOSITORY_NAME_RULE
