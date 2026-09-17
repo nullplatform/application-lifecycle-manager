@@ -8,6 +8,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Fixed
+- A template that does not resolve now stops the workflow instead of creating an empty repository.
+  `np template read | jq -r .url` reported nothing on failure -- jq on empty input prints nothing
+  and exits 0 -- so `TEMPLATE_URL` came back empty and the providers ran with it: Bitbucket created
+  the repository, left it empty and closed the hook as `success`. The call and the `url` are both
+  checked now, and the error names the template and the variable the id came from.
 - GitHub: a failed `mise` no longer ends the workflow. `gh` is fetched from the release tarball
   instead, into `GH_INSTALL_DIR`, and verified against the checksums GitHub publishes with the
   release. mise's attestation check fails on the nullplatform agent image
@@ -37,6 +42,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - A test suite for the GitHub code repository provider: 16 cases across all six of its steps,
   where it previously had none. `tests/stubs/gh` resolves canned responses from the same fixtures
   the curl stub uses, so a GitHub case is written the same way a Bitbucket one is.
+- `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` creates an application that carries no template from a
+  default one, for installations that removed the template chooser from their console. Those
+  applications previously read as "importing a repository that already exists" and died at
+  `validate_repository_does_not_exist` on a repository nobody had created. An application with its
+  own template is never overridden, and unset the behaviour is unchanged. **Setting it removes the
+  import path for the whole installation**, since the absence of a template was the only signal the
+  dispatcher had for an import. `resolve_repository_name` now reads the dispatcher's
+  `CODE_REPOSITORY_STRATEGY` rather than re-deriving the same decision from `template_id`, so the
+  two cannot drift apart again.
 - Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses which pipeline file from the template is used, for templates that do not name it `bitbucket-pipelines.yml`.
 - Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build after a repository is created.
 

@@ -1,0 +1,82 @@
+#!/bin/bash
+# An installation can take the template chooser out of the console, so that every
+# application is scaffolded the same way and the templating happens in the hooks
+# instead. Those applications arrive with NO template_id at all.
+#
+# Without a default that reads as "importing a repository that already exists",
+# which is the opposite of what is happening, and the run dies at
+# validate_repository_does_not_exist on a repository nobody ever created.
+#
+# CODE_REPOSITORY_DEFAULT_TEMPLATE_ID fills that gap: no template on the
+# application means use this one, which makes the strategy `create` and lets the
+# name be derived.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+GITHUB_SPEC_ID="1043b379-9fa8-4d2d-bc18-9c5b0d3038f2"
+export CODE_REPOSITORY_PROVIDER="github"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+case "\$1" in
+  provider) echo '{"results":[{"id":"cfg-1","specification_id":"$GITHUB_SPEC_ID","attributes":{"setup":{"organization":"acme"},"access":{}}}]}' ;;
+  template) echo '{"id":1855672260,"url":"https://github.com/nullplatform/technology-templates-any"}' ;;
+  *)        echo '{}' ;;
+esac
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+# An application the console produced with the chooser removed: a default
+# repository_url, and no template.
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c 'del(.template_id) | .repository_url = "https://github.com/acme/test-whatever"')
+export APPLICATION
+
+failed=0
+
+# With a default configured: create, and the name comes from the metadata.
+export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="1855672260"
+
+strategy=$(capture_code_repo_export create_code_repository CODE_REPOSITORY_STRATEGY)
+name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+url=$(capture_code_repo_export create_code_repository TEMPLATE_URL)
+
+[[ "$strategy" == "create" ]] || { echo "  FAIL: expected strategy 'create', got '$strategy'"; failed=1; }
+[[ "$name" == "net-app-fire-issuance" ]] || { echo "  FAIL: expected the derived name, got '$name'"; failed=1; }
+[[ "$url" == "https://github.com/nullplatform/technology-templates-any" ]] || { echo "  FAIL: expected the default template's URL, got '$url'"; failed=1; }
+
+# Without a default: unchanged -- this is an import, and the URL wins.
+unset CODE_REPOSITORY_DEFAULT_TEMPLATE_ID
+
+strategy=$(capture_code_repo_export create_code_repository CODE_REPOSITORY_STRATEGY)
+name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+
+[[ "$strategy" == "import" ]] || { echo "  FAIL: with no default, expected 'import', got '$strategy'"; failed=1; }
+[[ "$name" == "test-whatever" ]] || { echo "  FAIL: with no default, expected the URL's name, got '$name'"; failed=1; }
+
+# An application that DOES carry a template keeps it; the default never overrides.
+export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="1855672260"
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.template_id = 777 | .repository_url = "https://github.com/acme/test-whatever"')
+export APPLICATION
+
+# BB_CALLS accumulates across the scenarios above, so without this the grep would
+# pass on any run that happened to mention 777 -- it proves the id appears
+# somewhere, not that THIS run used it instead of the default.
+: > "$BB_CALLS"
+
+run_code_repo_step create_code_repository
+grep -q 'template read --id 777' "$BB_CALLS" || { echo "  FAIL: the default overrode the application's own template"; failed=1; }
+grep -q 'template read --id 1855672260' "$BB_CALLS" && { echo "  FAIL: the default was read even though the application carries its own template"; failed=1; }
+
+exit "$failed"

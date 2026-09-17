@@ -1,0 +1,35 @@
+#!/bin/bash
+# The step now branches on CODE_REPOSITORY_STRATEGY, which the dispatcher sets
+# before sourcing it. Every other naming case sets it to one of the two literals,
+# so nothing pins what happens when it is missing entirely -- and the difference
+# is invisible in the suite: writing the gate as `== "import"` instead of
+# `!= "create"` leaves all of them green while reversing this case.
+#
+# Unset has to mean "derive nothing". This is a `before` hook that fails closed,
+# so a name invented on an unknown strategy would create a repository under it.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+unset CODE_REPOSITORY_STRATEGY
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance)
+export REPOSITORY_NAME_RULE APPLICATION
+
+run_code_repo_step resolve_repository_name
+assert_status 0 || exit 1
+
+name=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+derived=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME_DERIVED)
+
+if [[ -n "$name" ]]; then
+  echo "  FAIL: derived '$name' with no strategy set; only 'create' may derive a name"
+  exit 1
+fi
+
+if [[ "$derived" == "true" ]]; then
+  echo "  FAIL: marked the name as derived with no strategy set"
+  exit 1
+fi

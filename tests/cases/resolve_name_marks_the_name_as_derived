@@ -9,6 +9,10 @@ trap teardown EXIT
 
 unset REPOSITORY_NAME
 
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
 REPOSITORY_NAME_RULE=$(wizard_rule)
 export REPOSITORY_NAME_RULE
 
@@ -21,8 +25,9 @@ if [[ "$derived" != "true" ]]; then
   exit 1
 fi
 
-# Import path: no template_id, so nothing is derived and the application keeps
-# the repository_url it arrived with.
+# Import path: nothing is derived and the application keeps the repository_url it
+# arrived with.
+export CODE_REPOSITORY_STRATEGY="import"
 APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
   | jq -c '.repository_url = "https://github.com/acme/legacy-service" | del(.template_id)')
 export APPLICATION

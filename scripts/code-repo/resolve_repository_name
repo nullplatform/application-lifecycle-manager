@@ -53,18 +53,21 @@ if ! jq -e . >/dev/null 2>&1 <<<"$REPOSITORY_NAME_RULE"; then
   exit 1
 fi
 
-# Import is told apart by the ABSENCE of a template_id -- the same test the
-# dispatcher uses to choose between its `create` and `import` strategies.
+# Only a repository being created gets a derived name. An import already has one,
+# and pointing it somewhere else would send it at a repository that does not
+# exist.
 #
-# Not by the presence of a repository_url: the console fills that in before the
-# hook runs, defaulting to <namespace-slug>-<application-slug>, so every
-# application arrives here already carrying one. Keying off the URL would make
-# this step no-op on every real creation, which is exactly what it did at first.
-RESOLVE_TEMPLATE_ID=$(jq -r '.template_id // empty' <<<"$APPLICATION")
-
-if [[ -z "$RESOLVE_TEMPLATE_ID" ]]; then
+# The dispatcher has already settled this, so ask it rather than working it out
+# again from the application: it also applies the default template, and an
+# installation that removed the template chooser from its console produces
+# applications with no template at all.
+#
+# And not by the presence of a repository_url: the console fills that in before
+# the hook runs, defaulting to <namespace-slug>-<application-slug>, so every
+# application arrives here already carrying one.
+if [[ "$CODE_REPOSITORY_STRATEGY" != "create" ]]; then
   RESOLVE_EXISTING_URL=$(jq -r '.repository_url // empty' <<<"$APPLICATION")
-  echo "Application has no template_id, so it is importing an existing repository (${RESOLVE_EXISTING_URL:-unknown}); keeping its repository_url instead of deriving a name"
+  echo "Strategy is '${CODE_REPOSITORY_STRATEGY:-unset}', not 'create'; keeping the application's repository_url (${RESOLVE_EXISTING_URL:-unknown}) instead of deriving a name"
   return 0
 fi
 

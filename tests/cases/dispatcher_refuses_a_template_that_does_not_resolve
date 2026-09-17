@@ -1,0 +1,104 @@
+#!/bin/bash
+# The template id used to come from APPLICATION.template_id, written by the
+# platform. CODE_REPOSITORY_DEFAULT_TEMPLATE_ID is typed by an operator, so a
+# typo, a deleted template or a rendering artifact all reach `np template read`.
+#
+# Piped straight into jq, none of that is visible: jq on empty input prints
+# nothing and exits 0, so TEMPLATE_URL comes back empty and the assignment looks
+# like it worked. What follows is provider-shaped and none of it is good --
+# Bitbucket creates the repository, leaves it empty and closes the hook as
+# `success`; GitHub's `-z` guard misses the literal "null", because
+# `cut -d'/' -f2` of `null` is `null`.
+#
+# Both halves are checked here: the call failing, and the call succeeding with a
+# record that carries no url. Each scenario writes its own stub in full rather
+# than taking the body as a string -- shellcheck reads these, and it cannot read
+# a command assembled at run time.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+PROVIDERS='{"results":[{"id":"cfg-1","specification_id":"1043b379-9fa8-4d2d-bc18-9c5b0d3038f2","attributes":{"setup":{"organization":"acme"},"access":{}}}]}'
+
+export CODE_REPOSITORY_PROVIDER="github"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="4242"
+export PATH="$TEST_TMP:$PATH"
+
+APPLICATION=$(jq -nc '{repository_url: "https://github.com/acme/test-whatever", metadata: {}}')
+export APPLICATION
+
+failed=0
+
+# 1. The call fails. Whatever it wrote reaches the operator, since that is where
+#    the id came from.
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+case "\$1" in
+  provider) echo '$PROVIDERS' ;;
+  template) echo "template 4242 not found"; exit 1 ;;
+  *)        echo '{}' ;;
+esac
+STUB
+chmod +x "$TEST_TMP/np"
+
+run_code_repo_step create_code_repository
+
+if [[ "$STEP_STATUS" == "0" ]]; then
+  echo "  FAIL: a template that cannot be read did not stop the dispatcher"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"could not read template '4242'"* ]]; then
+  echo "  FAIL: the error does not name the template. Got: $STEP_OUTPUT"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"CODE_REPOSITORY_DEFAULT_TEMPLATE_ID"* ]]; then
+  echo "  FAIL: the error does not point at the variable the id came from"
+  failed=1
+fi
+
+# 2. The call succeeds but the record has no url -- the case jq would swallow.
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+case "\$1" in
+  provider) echo '$PROVIDERS' ;;
+  template) echo '{"id":4242}' ;;
+  *)        echo '{}' ;;
+esac
+STUB
+chmod +x "$TEST_TMP/np"
+
+run_code_repo_step create_code_repository
+
+if [[ "$STEP_STATUS" == "0" ]]; then
+  echo "  FAIL: a template with no url did not stop the dispatcher"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"carries no url"* ]]; then
+  echo "  FAIL: the error does not say the template has no url. Got: $STEP_OUTPUT"
+  failed=1
+fi
+
+# 3. And a template that resolves still passes, so the guard is not refusing
+#    everything.
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+case "\$1" in
+  provider) echo '$PROVIDERS' ;;
+  template) echo '{"id":4242,"url":"https://github.com/acme/template-service"}' ;;
+  *)        echo '{}' ;;
+esac
+STUB
+chmod +x "$TEST_TMP/np"
+
+run_code_repo_step create_code_repository
+
+if [[ "$STEP_STATUS" != "0" ]]; then
+  echo "  FAIL: a template that resolves was refused. Got: $STEP_OUTPUT"
+  failed=1
+fi
+
+exit "$failed"
