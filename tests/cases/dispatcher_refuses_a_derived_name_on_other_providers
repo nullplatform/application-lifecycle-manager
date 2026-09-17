@@ -16,10 +16,6 @@ source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
 
-SPECS_github=1043b379-9fa8-4d2d-bc18-9c5b0d3038f2
-SPECS_gitlab=2ff2fe2f-6434-48be-aed2-be22d4d4e77c
-SPECS_bitbucket=ca7019c5-f7da-4b79-8fd6-28afbaea366b
-
 export NRN="organization=1:account=2:namespace=3:application=4"
 export ACCOUNT_ID="2"
 
@@ -27,7 +23,15 @@ failed=0
 
 run_with_provider() {
   local provider="$1" spec
-  eval "spec=\$SPECS_$provider"
+
+  # The dispatcher picks the provider by the specification id on the provider
+  # record, so each case needs the real one.
+  case "$provider" in
+    github)    spec=1043b379-9fa8-4d2d-bc18-9c5b0d3038f2 ;;
+    gitlab)    spec=2ff2fe2f-6434-48be-aed2-be22d4d4e77c ;;
+    bitbucket) spec=ca7019c5-f7da-4b79-8fd6-28afbaea366b ;;
+    *)         echo "  FAIL: no specification id for provider '$provider'"; exit 1 ;;
+  esac
 
   : > "$BB_CALLS"
   unset REPOSITORY_NAME REPOSITORY_NAME_DERIVED
