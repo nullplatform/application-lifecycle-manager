@@ -140,11 +140,30 @@ resolve_reject_unusable() {
 RESOLVE_CONTEXT="$CONTEXT"
 
 if [[ -z "$RESOLVE_CONTEXT" ]]; then
+  # 2>/dev/null because the failure is reported below, with the variable named.
+  # Bare, jq prints `invalid JSON text passed to --argjson` and nothing about
+  # which of the three documents was the bad one.
   RESOLVE_CONTEXT=$(jq -nc \
     --argjson application "${APPLICATION:-null}" \
     --argjson namespace "${NAMESPACE:-null}" \
     --argjson account "${ACCOUNT:-null}" \
-    '{application: $application, namespace: $namespace, account: $account}')
+    '{application: $application, namespace: $namespace, account: $account}' 2>/dev/null)
+fi
+
+# Checked once, here, because every lookup below swallows jq's errors so that a
+# path leading nowhere reads as "absent". That swallowing used to hide a broken
+# context too: every path came back empty and the step blamed the first field the
+# pattern asked for -- a field the developer did fill in, in a message they cannot
+# act on. scripts/base_context builds CONTEXT from three `np ... read` calls and
+# checks none of them, so a transient API failure arrives here as garbage.
+if ! jq -e 'type == "object" and .application != null' >/dev/null 2>&1 <<<"$RESOLVE_CONTEXT"; then
+  echo "ERROR: the hook context is missing or unusable, so there is nothing to build a repository name from."
+  if [[ -n "$CONTEXT" ]]; then
+    echo "CONTEXT is set but is not a JSON object carrying an application. Check scripts/base_context and the 'np account/namespace/application read' calls it makes."
+  else
+    echo "CONTEXT is unset and the fallback could not be assembled from APPLICATION, NAMESPACE and ACCOUNT -- at least one of them is not valid JSON. Check the 'np ... read' calls in scripts/base_context."
+  fi
+  exit 1
 fi
 
 # resolve_path_value PATH -- the scalar the context carries at PATH, empty when
@@ -172,6 +191,17 @@ resolve_path_type() {
     | type
   ' <<<"$RESOLVE_CONTEXT" 2>/dev/null
 }
+
+# A path is a dotted path and nothing else. Held in one variable because both
+# sides need it and they used to disagree: the placeholders were checked against
+# it and the condition keys were not, so `application.metadata.x` -- no leading
+# dot -- worked in a condition and was refused in the pattern. `ltrimstr(".")` is
+# a no-op without the dot and `split(".")` still yields the right parts, which is
+# why the condition side never noticed.
+#
+# The same string is handed to jq's test() below. It means the same thing in both:
+# no alternation, no backreference, nothing the two flavours read differently.
+RESOLVE_PATH_RE='^(\.[A-Za-z0-9_-]+)+$'
 
 # The rule is written by whoever configures the agent, and the developer creating
 # an application cannot see it. So every shape problem in it has to say the rule
@@ -207,7 +237,7 @@ fi
 # INDEX, which is what the operator needs to find it in a rule that is several
 # branches long. jq's if/elif is lazy, so `.naming_pattern` is only reached on an
 # entry already known to be an object.
-RESOLVE_SHAPE_ERROR=$(jq -r '
+RESOLVE_SHAPE_ERROR=$(jq -r --arg pathre "$RESOLVE_PATH_RE" '
   [ .branches
     | to_entries[]
     | .key as $i
@@ -220,6 +250,10 @@ RESOLVE_SHAPE_ERROR=$(jq -r '
         "branch \($i) has a condition that is a \($b.condition | type); a condition is an object of path -> expected value"
       elif ((($b.condition // {}) | to_entries | map(select((.value | type) | . == "array" or . == "object")) | length) > 0) then
         "branch \($i) has a condition compared against a list or an object; only a single value can be compared"
+      elif ((($b.condition // {}) | to_entries | map(select(.value == null)) | first) != null) then
+        "branch \($i) compares a condition against null, which can never match: an absent path yields the empty string, not null. Only a string, a number or a boolean can be compared"
+      elif ((($b.condition // {}) | keys_unsorted | map(select(test($pathre) | not)) | first) != null) then
+        "branch \($i) has a condition on \(($b.condition | keys_unsorted | map(select(test($pathre) | not)) | first)), which is not a path a naming rule can use. A path is dotted, like .application.metadata.application.domain or .namespace.slug"
       else empty end
   ] | first // empty
 ' <<<"$REPOSITORY_NAME_RULE")
@@ -256,6 +290,8 @@ while [[ "$resolve_index" -lt "$RESOLVE_BRANCH_COUNT" ]]; do
 
   if [[ "$resolve_matched" -eq 1 ]]; then
     RESOLVE_MATCHED_INDEX="$resolve_index"
+    RESOLVE_MATCHED_CONDITIONS=$(jq -r --argjson i "$resolve_index" \
+      '.branches[$i].condition // {} | length' <<<"$REPOSITORY_NAME_RULE")
     RESOLVE_PATTERN=$(jq -r --argjson i "$resolve_index" \
       '.branches[$i].naming_pattern' <<<"$REPOSITORY_NAME_RULE")
     break
@@ -290,6 +326,17 @@ if [[ "$RESOLVE_MATCHED_INDEX" -lt 0 ]]; then
 
   echo "Add a branch for this combination, or a branch with no 'condition' at the end of the list to catch everything else."
   exit 1
+fi
+
+# Said out loud because a condition whose path resolves to nothing does not fail
+# -- the branch just does not match -- so a misspelt path falls through to the
+# catch-all and the repository is created under the fallback name with nothing to
+# show for it. The path is well formed, so no shape check catches it; naming the
+# branch that won is what makes the fall-through visible in the hook messages.
+if [[ "$RESOLVE_MATCHED_CONDITIONS" -eq 0 ]]; then
+  echo "Naming rule: branch $RESOLVE_MATCHED_INDEX has no condition, so it matched as the fallback. Pattern: $RESOLVE_PATTERN"
+else
+  echo "Naming rule: branch $RESOLVE_MATCHED_INDEX matched on all $RESOLVE_MATCHED_CONDITIONS of its conditions. Pattern: $RESOLVE_PATTERN"
 fi
 
 # Expanded inline rather than through a helper: a helper that both echoes the
@@ -328,7 +375,7 @@ while [[ "$resolve_rest" == *"{"* ]]; do
   # are parsed rather than evaluated as jq, so a placeholder that is not a dotted
   # path is a rule problem, and saying so beats an empty lookup that gets blamed
   # on the developer's metadata.
-  if [[ ! "$resolve_placeholder" =~ ^(\.[A-Za-z0-9_-]+)+$ ]]; then
+  if [[ ! "$resolve_placeholder" =~ $RESOLVE_PATH_RE ]]; then
     echo "ERROR: '$resolve_placeholder' is not a path a naming_pattern can use. A placeholder is a dotted path against the hook's context -- {.application.metadata.application.domain}, {.namespace.slug} -- with an optional trailing '?'."
     exit 1
   fi

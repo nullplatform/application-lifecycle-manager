@@ -1,0 +1,70 @@
+#!/bin/bash
+# The paths resolve against $CONTEXT, and jq's errors on it are swallowed so that
+# a path leading nowhere reads as "absent" rather than as a jq stack trace. That
+# swallowing also hid a broken context: every lookup came back empty, and the
+# step blamed the first path the pattern asked for -- a field the developer did
+# fill in, named in a message they cannot act on.
+#
+# scripts/base_context builds CONTEXT from three `np ... read` calls and checks
+# none of them, so a transient API failure reaches here.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+md=".application.metadata.application"
+
+REPOSITORY_NAME_RULE=$(jq -nc --arg md "$md" \
+  '{branches: [{naming_pattern: "{\($md).domain}-{\($md).subdomain}"}]}')
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+expect_rejected() {
+  local label="$1"
+
+  unset REPOSITORY_NAME
+  run_code_repo_step resolve_repository_name
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL: $label should exit 1, got $STEP_STATUS"
+    failed=1
+    return
+  fi
+
+  # The point of the finding: it must not name a metadata field, because the
+  # metadata is not what is broken.
+  if [[ "$STEP_OUTPUT" != *"context"* ]]; then
+    echo "  FAIL: $label was rejected without blaming the context:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+  if [[ "$STEP_OUTPUT" == *"$md.domain"* ]]; then
+    echo "  FAIL: $label blamed the developer's metadata:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+APPLICATION=$(wizard_metadata architecture=.NET domain=fire subdomain=issuance)
+export APPLICATION
+
+export CONTEXT='{"application": truncado...'
+expect_rejected "a CONTEXT that is not valid JSON"
+
+export CONTEXT='"a string, not an object"'
+expect_rejected "a CONTEXT that is not an object"
+
+export CONTEXT='{"notification":{"id":1}}'
+expect_rejected "a CONTEXT carrying no application"
+
+# np application read failed and handed back its error message instead of JSON,
+# so the fallback assembly cannot build a context either.
+unset CONTEXT
+export APPLICATION='ERROR: could not read application 123'
+expect_rejected "an APPLICATION that is not JSON, with no CONTEXT"
+
+exit "$failed"

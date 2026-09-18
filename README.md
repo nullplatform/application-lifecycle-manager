@@ -215,6 +215,16 @@ exact strings. An entry with no `condition` matches anything, which makes it the
 useful as the last entry, where it cannot shadow the ones after it. If nothing matches and there is
 no fallback, the hook stops and prints what each condition compared against.
 
+The expected value is a string, a number or a boolean. A list, an object or `null` is refused when
+the rule is read — `null` in particular could never match, because a path that resolves to nothing
+yields the empty string.
+
+**The hook messages say which branch produced the name, and whether it won as the fallback.** That
+line is worth reading: a condition whose path is *misspelt* is not an error — the path is well
+formed, it simply resolves to nothing, so the branch does not match and the next one is tried. With
+a fallback in the rule the repository is then created under the fallback's name and nothing else
+reports it.
+
 ##### Paths
 
 Both the condition keys and the `{...}` placeholders are dotted paths into the hook's context, which
@@ -231,8 +241,9 @@ metadata fields are reached through their specification's `metadata` key —
 `.application.metadata.application.domain` for a specification whose `metadata` key is `application`,
 which is not necessarily the entity name.
 
-A path is a dotted path and nothing else: it is parsed, not evaluated as a jq program, so `{.a | keys}`
-or `{.a[0]}` is refused as a rule problem rather than run.
+A path is a dotted path and nothing else: it is parsed, not evaluated as a jq program, so `.a | keys`
+or `.a[0]` is refused as a rule problem rather than run. That applies to a condition's keys exactly
+as it does to a placeholder — including the leading dot, which is required in both.
 
 ##### Optional placeholders
 

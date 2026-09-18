@@ -33,7 +33,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   matches anything and is the fallback. A placeholder ending in `?` is optional and leaves no trace
   when blank -- the assembled name is slugified as a whole, so the separators around it close up.
   Paths are parsed rather than evaluated as jq, so a rule cannot run an expression against the
-  context. `REPOSITORY_NAME_RULE_B64` carries the same document base64-encoded, for deployments that
+  context, and the same check applies to a condition's keys and to a pattern's placeholders. The
+  hook messages name the branch that produced the name, and say when it won as the fallback -- a
+  misspelt condition path is not an error, it just never matches, and that line is what makes the
+  fall-through visible. A context that is missing or unusable is reported as such instead of being
+  blamed on the first field the pattern asks for. `REPOSITORY_NAME_RULE_B64` carries the same document base64-encoded, for deployments that
   cannot put double quotes in an environment variable; from terraform that is
   `filebase64("rules.json")` -- `jsonencode(file(...))` hands the document over as a quoted string
   and is rejected with a message that says so.

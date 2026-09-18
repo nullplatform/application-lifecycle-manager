@@ -74,6 +74,27 @@ expect_rejected "a path that is a jq expression" \
 expect_rejected "a placeholder that is never closed" \
   "{\"branches\":[{\"naming_pattern\":\"{$md.domain\"}]}" "closed"
 
+# Every other scalar works as a condition value -- string, number, boolean -- and
+# a list or an object is refused above. null was the one that passed the shape
+# check and could then never match: `null | tostring` is "null" and an absent
+# path yields "", so the branch is dead. With a catch-all in the rule that is
+# silent, exactly like a misspelt path.
+expect_rejected "a condition compared against null" \
+  "{\"branches\":[{\"condition\":{\"$md.architecture\":null},\"naming_pattern\":\"{$md.domain}\"}]}" \
+  "can never match"
+
+# The same path shape the naming_pattern refuses. A condition used to take it:
+# `ltrimstr(".")` is a no-op without the dot and `split(".")` still produces the
+# right parts, so the rule author wrote it one way, it worked, and copying it
+# into the pattern was what finally failed.
+expect_rejected "a condition path with no leading dot" \
+  "{\"branches\":[{\"condition\":{\"application.metadata.application.architecture\":\".NET\"},\"naming_pattern\":\"{$md.domain}\"}]}" \
+  "application.metadata.application.architecture"
+
+expect_rejected "a condition path that is a jq expression" \
+  "{\"branches\":[{\"condition\":{\".application | keys\":\".NET\"},\"naming_pattern\":\"{$md.domain}\"}]}" \
+  "is not a path"
+
 # Nothing matched and no catch-all: the old code let this fall through to a name
 # built from an empty pattern, reported as a success.
 expect_rejected "no branch matching and no catch-all" \
