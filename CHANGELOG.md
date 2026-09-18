@@ -25,6 +25,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - GitHub: `gh` is installed from the release tarball instead of `mise`, whose attestation check
   fails on the nullplatform agent image.
 - Test helpers `capture_export` and `run_step` no longer collide with variables in the script under test.
+- `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` now overrides the application's template, not only an empty one.
 
 ## [0.3.0] - 2026-08-04
 
