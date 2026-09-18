@@ -4,7 +4,7 @@
 # has to be able to reach the name, but a blank one must leave no trace: no empty
 # segment, no double hyphen, and above all no failure.
 #
-# A trailing "?" on the field name in the rule marks it optional. Required fields
+# A trailing "?" inside the placeholder marks it optional. Required fields
 # keep failing loudly when they are missing -- that is a different case, and the
 # one that would otherwise bake an untraceable name into an application.
 source "$(dirname "$0")/../lib.sh"
@@ -17,14 +17,19 @@ unset REPOSITORY_NAME
 # exercise the step on its own, so they set it themselves.
 export CODE_REPOSITORY_STRATEGY="create"
 
-REPOSITORY_NAME_RULE=$(jq -nc '{
-  metadata_key: "application",
-  root: "architecture",
-  branches: {
-    ".NET": ["dotnet_type", "experience?", "system_or_core?", "domain", "subdomain"],
-    "Node": ["node_type", "domain", "subdomain", "free_text_optional?"]
-  },
-  default: ["free_name"]
+md=".application.metadata.application"
+
+REPOSITORY_NAME_RULE=$(jq -nc --arg md "$md" '{
+  branches: [
+    {
+      condition: { "\($md).architecture": ".NET" },
+      naming_pattern: "{\($md).architecture}-{\($md).dotnet_type}-{\($md).experience?}-{\($md).system_or_core?}-{\($md).domain}-{\($md).subdomain}"
+    },
+    {
+      condition: { "\($md).architecture": "Node" },
+      naming_pattern: "{\($md).architecture}-{\($md).node_type}-{\($md).domain}-{\($md).subdomain}-{\($md).free_text_optional?}"
+    }
+  ]
 }')
 export REPOSITORY_NAME_RULE
 
@@ -77,7 +82,7 @@ run_code_repo_step resolve_repository_name
 if [[ "$STEP_STATUS" != 1 ]]; then
   echo "  FAIL: a missing REQUIRED field must still exit 1, got $STEP_STATUS"
   failed=1
-elif [[ "$STEP_OUTPUT" != *"'domain'"* ]]; then
+elif [[ "$STEP_OUTPUT" != *"'$md.domain'"* ]]; then
   echo "  FAIL: the missing required field was not named:"
   printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
   failed=1

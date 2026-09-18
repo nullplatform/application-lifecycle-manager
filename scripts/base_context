@@ -6,12 +6,20 @@ ACCOUNT_ID=$(echo "$NRN" | sed -n 's/.*account=\([0-9]*\).*/\1/p')
 NAMESPACE_ID=$(echo "$NRN" | sed -n 's/.*namespace=\([0-9]*\).*/\1/p')
 APPLICATION_ID=$(echo "$NRN" | sed -n 's/.*application=\([0-9]*\).*/\1/p')
 
+ACCOUNT=$(np account read --format json --id "$ACCOUNT_ID")
+
 NAMESPACE=$(np namespace read --format json --id "$NAMESPACE_ID")
 
 APPLICATION=$(np application read --format json --id "$APPLICATION_ID")
 
 APPLICATION_SLUG=$(echo "$APPLICATION" | jq -r .slug)
 NAMESPACE_SLUG=$(echo "$NAMESPACE" | jq -r .slug)
+
+CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq \
+  --argjson namespace "$NAMESPACE" \
+  --argjson application "$APPLICATION" \
+  --argjson account "$ACCOUNT" \
+  '.notification + {namespace: $namespace, application: $application, account: $account}')
 
 export ACCOUNT_ID
 
@@ -23,3 +31,4 @@ export APPLICATION
 export APPLICATION_ID
 export APPLICATION_SLUG
 export NRN
+export CONTEXT

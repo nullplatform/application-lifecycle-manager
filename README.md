@@ -176,12 +176,12 @@ The id is read at run time: a template that does not resolve, or one whose recor
 stops the workflow naming the id and the variable it came from. It is not validated when the agent
 starts, so a typo surfaces on the first application created after the change.
 
-#### Naming the repository from metadata
+#### Naming the repository from a rule
 
 By default the repository name is the last segment of the application's `repository_url`, which
-the platform already knows by the time the hook runs. Set `REPOSITORY_NAME_RULE` to derive it from
-the metadata the developer filled in while creating the application instead: the repository is then
-born with the right name, with no rename afterwards and no `repository_url` left out of sync.
+the platform already knows by the time the hook runs. Set `REPOSITORY_NAME_RULE` to build it from
+what the hook knows about the application instead: the repository is then born with the right name,
+with no rename afterwards and no `repository_url` left out of sync.
 
 The rule is a JSON document on the ALM deployment's environment. Set it as
 `REPOSITORY_NAME_RULE`, or — when the deployment cannot carry double quotes in an
@@ -193,60 +193,105 @@ quotes breaks the YAML before the agent starts.
 
 ```json
 {
-  "metadata_key": "application",
-  "root": "architecture",
-  "branches": {
-    ".NET": ["dotnet_type", "domain", "subdomain"],
-    "Node": ["node_type", "domain", "subdomain"]
-  },
-  "default": ["free_name"]
+  "branches": [
+    {
+      "condition": { ".application.metadata.application.architecture": ".NET" },
+      "naming_pattern": "{.application.metadata.application.architecture}-{.application.metadata.application.dotnet_type}-{.application.metadata.application.experience?}-{.application.metadata.application.domain}-{.application.metadata.application.subdomain}"
+    },
+    {
+      "condition": { ".application.metadata.application.architecture": "Node" },
+      "naming_pattern": "{.application.metadata.application.architecture}-{.application.metadata.application.node_type}-{.application.metadata.application.domain}-{.application.metadata.application.subdomain}"
+    },
+    {
+      "naming_pattern": "{.namespace.slug}-{.application.slug}"
+    }
+  ]
 }
 ```
 
-| Field | Meaning |
+`branches` is a list, tried in order, and the **first** entry whose `condition` holds wins. A
+`condition` is an object of path → expected value; **all** of its entries have to match, compared as
+exact strings. An entry with no `condition` matches anything, which makes it the fallback — and only
+useful as the last entry, where it cannot shadow the ones after it. If nothing matches and there is
+no fallback, the hook stops and prints what each condition compared against.
+
+##### Paths
+
+Both the condition keys and the `{...}` placeholders are dotted paths into the hook's context, which
+is the notification plus the three documents it resolves:
+
+| Path | What it reads |
 |---|---|
-| `metadata_key` | The top-level key the values sit under in the application's `metadata`. This is the `metadata` field of the metadata specification, which is not necessarily the entity name. |
-| `root` | The metadata field whose value both opens the name and selects the branch. |
-| `branches` | Per root value, the metadata fields appended after it, in order. |
-| `default` | The fields used when the root value matches no branch. |
+| `.application` | the application, as `np application read` returns it — `.application.slug`, `.application.metadata.<key>.<field>`, `.application.template_id` |
+| `.namespace` | the namespace — `.namespace.slug` |
+| `.account` | the account — `.account.slug` |
 
-A field name ending in `?` is **optional**: when the metadata carries no value for it, its segment is
-left out and the name closes up, with no empty segment and no failure. Without the marker a missing
-field stops the workflow, which is what you want for a field the form requires — an empty segment
-would produce `net-app--issuance` and bake a name nobody can trace back into the application.
+So a rule can name a repository after things the application document does not carry, and the
+metadata fields are reached through their specification's `metadata` key —
+`.application.metadata.application.domain` for a specification whose `metadata` key is `application`,
+which is not necessarily the entity name.
 
-```json
-{ ".NET": ["dotnet_type", "experience?", "system_or_core?", "domain", "subdomain"] }
-```
+A path is a dotted path and nothing else: it is parsed, not evaluated as a jq program, so `{.a | keys}`
+or `{.a[0]}` is refused as a rule problem rather than run.
 
-With that branch, `.NET`/`APP`/`glass`/`cancellation` gives `net-app-glass-cancellation`, and the
-same selections plus Experience `gpas` give `net-app-gpas-glass-cancellation`.
+##### Optional placeholders
+
+A placeholder ending in `?` — `{.application.metadata.application.experience?}` — is **optional**:
+when nothing is there, its segment is left out and the name closes up, with no empty segment and no
+failure. Without the marker a missing value stops the workflow, which is what you want for a field
+the form requires — a silently dropped segment would produce `net-app-issuance`, one short and
+indistinguishable from a name that was meant to look like that.
+
+The separators around a placeholder are literal text in the pattern, so an optional one that
+disappears leaves them behind. They are collapsed with everything else (see below), which is also
+why a pattern may end in a separator: `"{.namespace.slug}-{.application.slug}-"` is fine.
+
+##### Slugification
 
 Every value is slugified — accented latin characters transliterated (`Cañería` → `caneria`),
 lowercased, each run of non-alphanumerics collapsed to a single hyphen, edges trimmed — and the
-results are joined with hyphens. That absorbs the shapes a metadata wizard produces without needing
-a mapping table: `.NET` becomes `net`, `IAC Terraform` becomes `iac-terraform`, `Backend BFF`
-becomes `backend-bff`.
+assembled name is slugified once more, which is what closes up the gaps left by optional
+placeholders. That absorbs the shapes a metadata wizard produces without needing a mapping table:
+`.NET` becomes `net`, `IAC Terraform` becomes `iac-terraform`, `Backend BFF` becomes `backend-bff`.
 
 With the rule above:
 
-| Metadata | Repository |
+| Application | Repository |
 |---|---|
 | `architecture=.NET`, `dotnet_type=APP`, `domain=fire`, `subdomain=issuance` | `net-app-fire-issuance` |
+| the same plus `experience=gpas` | `net-app-gpas-fire-issuance` |
 | `architecture=Node`, `node_type=Backend BFF`, `domain=motor`, `subdomain=claim` | `node-backend-bff-motor-claim` |
-| `architecture=IAC Terraform`, `free_name=redes` | `iac-terraform-redes` |
+| `architecture=IAC Terraform` (no branch matches) | `<namespace-slug>-<application-slug>` |
 
-Fields the branch does not list are ignored, so a wizard can collect more than the name uses.
+Paths a branch does not use are ignored, so a wizard can collect more than the name needs.
 
-A field a branch **does** list that is missing or empty fails the hook, naming that field. An empty
-segment would collapse into `net-app--issuance` and bake a name nobody can trace back into the
-application, so failing is the safer outcome. Names over GitHub's 100 character limit are rejected
-the same way — the free-text branches make that limit reachable.
+A required placeholder that is missing or empty fails the hook, naming that path. A value that is an
+array or an object fails the same way, as does one that slugifies to nothing — present but unusable
+is always an error, optional or not, because skipping it would silently drop an answer the developer
+gave. Names over GitHub's 100 character limit are rejected too; the free-text branches make that
+limit reachable.
 
-Two cases are deliberately left alone: an application whose strategy resolves to `import` (no
-`template_id` on the application **and** no `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` on the agent), and
-any deployment with no `REPOSITORY_NAME_RULE` set. The signal is the strategy, not the
-`repository_url` — the console fills that in for every application before the hook ever runs.
+##### Setting it from terraform
+
+`file()` returns the document as a string, and `jsonencode()` of a string wraps it in quotes and
+escapes the ones inside — so `jsonencode(file("rules.json"))` hands over a JSON *string*, not a JSON
+object. It passes a validity check and fails later. Read the file straight into the base64 variable
+instead:
+
+```hcl
+extra_envs = {
+  REPOSITORY_NAME_RULE_B64 = filebase64("${path.module}/repository_name_rules.json")
+}
+```
+
+Set one or the other, not both: the plain variable wins when it is non-empty.
+
+##### What is left alone
+
+Two cases deliberately: an application whose strategy resolves to `import` (no `template_id` on the
+application **and** no `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` on the agent), and any deployment with
+no rule set. The signal is the strategy, not the `repository_url` — the console fills that in for
+every application before the hook ever runs.
 
 > **The derived URL travels back in `callback_body`.** An application being created answers
 > `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` to `np application update` for a window at the

@@ -296,18 +296,37 @@ secret_fixture() {
 # a two-branch wizard (.NET / Node) with a free-name fallback for the branches
 # that ask for nothing else. It mirrors the shape of a real metadata
 # specification, so the cases read the way the wizard is filled in.
+#
+# The fallback is the last entry and carries no `condition`, which is how the
+# rule spells "matches anything": branches are tried in order, so a catch-all
+# anywhere but last would shadow the ones after it.
 wizard_rule() {
   cat <<'JSON'
 {
-  "metadata_key": "application",
-  "root": "architecture",
-  "branches": {
-    ".NET": ["dotnet_type", "domain", "subdomain"],
-    "Node": ["node_type", "domain", "subdomain"]
-  },
-  "default": ["free_name"]
+  "branches": [
+    {
+      "condition": { ".application.metadata.application.architecture": ".NET" },
+      "naming_pattern": "{.application.metadata.application.architecture}-{.application.metadata.application.dotnet_type}-{.application.metadata.application.domain}-{.application.metadata.application.subdomain}"
+    },
+    {
+      "condition": { ".application.metadata.application.architecture": "Node" },
+      "naming_pattern": "{.application.metadata.application.architecture}-{.application.metadata.application.node_type}-{.application.metadata.application.domain}-{.application.metadata.application.subdomain}"
+    },
+    {
+      "naming_pattern": "{.application.metadata.application.architecture}-{.application.metadata.application.free_name}"
+    }
+  ]
 }
 JSON
+}
+
+# wizard_context [NAMESPACE_SLUG] -- the $CONTEXT base_context builds, wrapped
+# around whatever $APPLICATION currently holds. Only the cases that reach outside
+# the application document need it; the step assembles the same shape itself when
+# CONTEXT is unset, which is what keeps the rest of the cases to one variable.
+wizard_context() {
+  jq -nc --argjson app "$APPLICATION" --arg ns "${1:-acme}" \
+    '{application: $app, namespace: {slug: $ns}, account: {slug: "root"}}'
 }
 
 # wizard_metadata KEY=VALUE... -- an $APPLICATION document carrying those wizard

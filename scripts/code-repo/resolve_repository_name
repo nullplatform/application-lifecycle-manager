@@ -107,36 +107,8 @@ resolve_slug() {
     | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
 }
 
-# The rule is written by whoever configures the agent, and the developer creating
-# an application cannot see it. So every shape problem in it has to say so:
-# `jq -r` on a missing key yields the STRING "null", which used to be looked up as
-# a metadata field and reported as the developer's missing answer.
-# Checked inline rather than through a helper: a helper that both echoes the
-# value and reports the error has to run in a command substitution, and there its
-# error message is captured into the variable instead of reaching the log.
-RESOLVE_METADATA_KEY=$(jq -r 'if (.metadata_key | type) == "string" then .metadata_key else empty end' <<<"$REPOSITORY_NAME_RULE")
-
-if [[ -z "$RESOLVE_METADATA_KEY" ]]; then
-  echo "ERROR: the naming rule needs a non-empty string 'metadata_key'. Check REPOSITORY_NAME_RULE on the agent."
-  exit 1
-fi
-
-RESOLVE_ROOT_FIELD=$(jq -r 'if (.root | type) == "string" then .root else empty end' <<<"$REPOSITORY_NAME_RULE")
-
-if [[ -z "$RESOLVE_ROOT_FIELD" ]]; then
-  echo "ERROR: the naming rule needs a non-empty string 'root'. Check REPOSITORY_NAME_RULE on the agent."
-  exit 1
-fi
-
-RESOLVE_BRANCHES_TYPE=$(jq -r '.branches | type' <<<"$REPOSITORY_NAME_RULE" 2>/dev/null)
-
-if [[ "$RESOLVE_BRANCHES_TYPE" != "object" && "$RESOLVE_BRANCHES_TYPE" != "null" ]]; then
-  echo "ERROR: the naming rule's 'branches' is a $RESOLVE_BRANCHES_TYPE; it has to be an object keyed by the root's values."
-  exit 1
-fi
-
-# A value can be present and still be unusable. Both checks apply to the root and
-# to every branch field, so they live here.
+# A value can be present and still be unusable. It applies to every placeholder
+# the pattern expands, so it lives here.
 resolve_reject_unusable() {
   local field="$1" value="$2" segment="$3"
 
@@ -145,113 +117,271 @@ resolve_reject_unusable() {
   # rejects it with a message about repository creation -- the message this whole
   # validation exists to replace.
   if [[ "$value" == *[[:cntrl:]]* ]]; then
-    echo "ERROR: the metadata field '$field' contains a control character, so it cannot become part of a repository name."
+    echo "ERROR: the value at '$field' contains a control character, so it cannot become part of a repository name."
     exit 1
   fi
 
   # The transliteration covers latin diacritics; a value in another script, or one
   # that is all punctuation, slugs to nothing and used to leave an empty segment.
   if [[ -z "$segment" ]]; then
-    echo "ERROR: the metadata field '$field' has the value '$value', which leaves nothing usable in a repository name."
+    echo "ERROR: the value at '$field' is '$value', which leaves nothing usable in a repository name."
     exit 1
   fi
 }
 
-RESOLVE_VALUES=$(jq -c --arg k "$RESOLVE_METADATA_KEY" '.metadata[$k] // {}' <<<"$APPLICATION")
+# Every path in the rule is absolute against the workflow's shared $CONTEXT --
+# `.application.metadata.application.domain`, `.namespace.slug` -- so a rule can
+# name anything the hook already knows, not just the application's metadata.
+#
+# Assembled here when CONTEXT is absent so the step still works on its own: an
+# installation running an older scripts/base_context has no CONTEXT to inherit,
+# and failing for that would take the naming feature down over a variable the
+# operator never sees.
+RESOLVE_CONTEXT="$CONTEXT"
 
-# `// empty` treats false as absent, so a wizard toggle answered "no" read as
-# unanswered and stopped the hook. Only null means unanswered.
-resolve_metadata_value() {
-  jq -r --arg f "$1" '.[$f] | if . == null then empty else tostring end' <<<"$RESOLVE_VALUES"
+if [[ -z "$RESOLVE_CONTEXT" ]]; then
+  RESOLVE_CONTEXT=$(jq -nc \
+    --argjson application "${APPLICATION:-null}" \
+    --argjson namespace "${NAMESPACE:-null}" \
+    --argjson account "${ACCOUNT:-null}" \
+    '{application: $application, namespace: $namespace, account: $account}')
+fi
+
+# resolve_path_value PATH -- the scalar the context carries at PATH, empty when
+# the path leads nowhere.
+#
+# getpath over a parsed path rather than `jq "$path"`: the rule is configuration,
+# and evaluating it as a jq program would make every naming rule a place to run
+# arbitrary jq against the hook's context. It also keeps the failure modes down
+# to one -- a path that leads nowhere -- instead of jq syntax errors surfacing
+# mid-hook.
+resolve_path_value() {
+  jq -r --arg p "$1" '
+    ($p | ltrimstr(".") | split(".")) as $parts
+    | getpath($parts)
+    | if . == null then empty else tostring end
+  ' <<<"$RESOLVE_CONTEXT" 2>/dev/null
 }
 
-RESOLVE_ROOT_VALUE=$(resolve_metadata_value "$RESOLVE_ROOT_FIELD")
+# resolve_path_type PATH -- the JSON type at PATH, so a value that cannot be a
+# segment is caught before it is stringified.
+resolve_path_type() {
+  jq -r --arg p "$1" '
+    ($p | ltrimstr(".") | split(".")) as $parts
+    | getpath($parts)
+    | type
+  ' <<<"$RESOLVE_CONTEXT" 2>/dev/null
+}
 
-# Without the root value there is no branch to pick, and the default branch
-# would blame whichever field it asks for first. Blame the root field instead.
-if [[ -z "$RESOLVE_ROOT_VALUE" ]]; then
-  echo "ERROR: the metadata field '$RESOLVE_ROOT_FIELD' is required to build the repository name but is empty or missing."
+# The rule is written by whoever configures the agent, and the developer creating
+# an application cannot see it. So every shape problem in it has to say the rule
+# is wrong, rather than blame a value the developer did fill in.
+RESOLVE_RULE_TYPE=$(jq -r 'type' <<<"$REPOSITORY_NAME_RULE")
+
+if [[ "$RESOLVE_RULE_TYPE" != "object" ]]; then
+  # A JSON string is the shape `jsonencode(file("rules.json"))` produces in
+  # terraform: the document arrives quoted, and `jq -e .` accepts it, so the
+  # mistake used to surface much later as a jq error about indexing a string.
+  echo "ERROR: the naming rule is a $RESOLVE_RULE_TYPE, not an object."
+  if [[ "$RESOLVE_RULE_TYPE" == "string" ]]; then
+    echo "If it comes from terraform, pass the file as filebase64(\"rules.json\") in REPOSITORY_NAME_RULE_B64. jsonencode(file(...)) hands the document over as a quoted string, not as JSON."
+  fi
   exit 1
 fi
 
-# Resolved before the loop, and its shape checked, because the list used to be
-# produced inside the here-string of the `while`: jq's failure went to stderr,
-# its status died inside $( ), the loop never ran, and the name came out as the
-# root's slug alone -- printed as a success, with the repository created under it.
-RESOLVE_BRANCH_TYPE=$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '(.branches[$r] // .default) | type' <<<"$REPOSITORY_NAME_RULE" 2>/dev/null)
+RESOLVE_BRANCHES_TYPE=$(jq -r '.branches | type' <<<"$REPOSITORY_NAME_RULE")
 
-case "$RESOLVE_BRANCH_TYPE" in
-  array) ;;
-  null|"")
-    echo "ERROR: the naming rule has no branch for '$RESOLVE_ROOT_FIELD' = '$RESOLVE_ROOT_VALUE', and no 'default'. Add one, or add a default."
-    exit 1
-    ;;
-  *)
-    echo "ERROR: the naming rule's branch for '$RESOLVE_ROOT_VALUE' is a $RESOLVE_BRANCH_TYPE; it has to be a list of metadata field names."
-    exit 1
-    ;;
-esac
-
-# `.[]` over an object is valid jq -- it iterates the VALUES -- so a branch
-# written as an object used to ask for whatever those values happened to spell.
-if [[ "$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '[(.branches[$r] // .default)[] | select(type != "string")] | length' <<<"$REPOSITORY_NAME_RULE")" != "0" ]]; then
-  echo "ERROR: the naming rule's branch for '$RESOLVE_ROOT_VALUE' has entries that are not strings; every entry has to be a metadata field name."
+if [[ "$RESOLVE_BRANCHES_TYPE" != "array" ]]; then
+  echo "ERROR: the naming rule's 'branches' is $RESOLVE_BRANCHES_TYPE, not a list of {condition, naming_pattern} entries."
   exit 1
 fi
 
-RESOLVE_FIELDS=$(jq -r --arg r "$RESOLVE_ROOT_VALUE" '(.branches[$r] // .default)[]' <<<"$REPOSITORY_NAME_RULE")
+RESOLVE_BRANCH_COUNT=$(jq '.branches | length' <<<"$REPOSITORY_NAME_RULE")
 
-RESOLVE_NAME=$(resolve_slug "$RESOLVE_ROOT_VALUE")
-resolve_reject_unusable "$RESOLVE_ROOT_FIELD" "$RESOLVE_ROOT_VALUE" "$RESOLVE_NAME"
+if [[ "$RESOLVE_BRANCH_COUNT" -eq 0 ]]; then
+  echo "ERROR: the naming rule's 'branches' is empty; it needs at least one entry with a naming_pattern."
+  exit 1
+fi
 
-while read -r resolve_field; do
-  [[ -z "$resolve_field" ]] && continue
+# One pass in jq rather than a loop in bash: it reports the first bad entry BY
+# INDEX, which is what the operator needs to find it in a rule that is several
+# branches long. jq's if/elif is lazy, so `.naming_pattern` is only reached on an
+# entry already known to be an object.
+RESOLVE_SHAPE_ERROR=$(jq -r '
+  [ .branches
+    | to_entries[]
+    | .key as $i
+    | .value as $b
+    | if ($b | type) != "object" then
+        "branch \($i) is a \($b | type); every branch has to be an object with a naming_pattern"
+      elif ($b.naming_pattern | type) != "string" or ($b.naming_pattern | length) == 0 then
+        "branch \($i) has no naming_pattern; every branch needs one, as a non-empty string"
+      elif ($b | has("condition")) and (($b.condition | type) != "object") then
+        "branch \($i) has a condition that is a \($b.condition | type); a condition is an object of path -> expected value"
+      elif ((($b.condition // {}) | to_entries | map(select((.value | type) | . == "array" or . == "object")) | length) > 0) then
+        "branch \($i) has a condition compared against a list or an object; only a single value can be compared"
+      else empty end
+  ] | first // empty
+' <<<"$REPOSITORY_NAME_RULE")
 
-  # A trailing "?" marks the field optional. The wizard collects fields the
+if [[ -n "$RESOLVE_SHAPE_ERROR" ]]; then
+  echo "ERROR: $RESOLVE_SHAPE_ERROR. Check REPOSITORY_NAME_RULE on the agent."
+  exit 1
+fi
+
+# Branches are tried in order and the first whose conditions all hold wins, so a
+# branch with no condition matches anything and acts as the fallback -- which is
+# only useful last, where it cannot shadow the ones after it.
+RESOLVE_PATTERN=""
+RESOLVE_MATCHED_INDEX=-1
+resolve_index=0
+
+while [[ "$resolve_index" -lt "$RESOLVE_BRANCH_COUNT" ]]; do
+  resolve_matched=1
+
+  # Process substitution, not a pipe: a pipe would run the loop in a subshell and
+  # resolve_matched would come back unset on every branch that did not match.
+  while read -r resolve_cond_path; do
+    [[ -z "$resolve_cond_path" ]] && continue
+
+    resolve_expected=$(jq -r --argjson i "$resolve_index" --arg k "$resolve_cond_path" \
+      '.branches[$i].condition[$k] | tostring' <<<"$REPOSITORY_NAME_RULE")
+
+    if [[ "$(resolve_path_value "$resolve_cond_path")" != "$resolve_expected" ]]; then
+      resolve_matched=0
+      break
+    fi
+  done < <(jq -r --argjson i "$resolve_index" \
+    '.branches[$i].condition // {} | keys_unsorted[]' <<<"$REPOSITORY_NAME_RULE")
+
+  if [[ "$resolve_matched" -eq 1 ]]; then
+    RESOLVE_MATCHED_INDEX="$resolve_index"
+    RESOLVE_PATTERN=$(jq -r --argjson i "$resolve_index" \
+      '.branches[$i].naming_pattern' <<<"$REPOSITORY_NAME_RULE")
+    break
+  fi
+
+  resolve_index=$((resolve_index + 1))
+done
+
+# Without this the empty pattern expanded to an empty name, which was then
+# reported as a success and used to create the repository.
+if [[ "$RESOLVE_MATCHED_INDEX" -lt 0 ]]; then
+  echo "ERROR: no branch in the naming rule matches this application, and there is no branch without a 'condition' to fall back to."
+  echo "What the rule compared:"
+
+  # Walked again rather than collected during the match: this only runs on the
+  # way out, and it is the message that tells the operator whether the rule or
+  # the metadata specification is the thing that moved.
+  resolve_index=0
+  while [[ "$resolve_index" -lt "$RESOLVE_BRANCH_COUNT" ]]; do
+    while read -r resolve_cond_path; do
+      [[ -z "$resolve_cond_path" ]] && continue
+
+      resolve_expected=$(jq -r --argjson i "$resolve_index" --arg k "$resolve_cond_path" \
+        '.branches[$i].condition[$k] | tostring' <<<"$REPOSITORY_NAME_RULE")
+
+      echo "  branch $resolve_index: $resolve_cond_path is '$(resolve_path_value "$resolve_cond_path")', the rule wants '$resolve_expected'"
+    done < <(jq -r --argjson i "$resolve_index" \
+      '.branches[$i].condition // {} | keys_unsorted[]' <<<"$REPOSITORY_NAME_RULE")
+
+    resolve_index=$((resolve_index + 1))
+  done
+
+  echo "Add a branch for this combination, or a branch with no 'condition' at the end of the list to catch everything else."
+  exit 1
+fi
+
+# Expanded inline rather than through a helper: a helper that both echoes the
+# name and reports a placeholder problem has to run in a command substitution,
+# and there its error message is captured into the variable instead of reaching
+# the log.
+RESOLVE_NAME=""
+resolve_rest="$RESOLVE_PATTERN"
+
+while [[ "$resolve_rest" == *"{"* ]]; do
+  RESOLVE_NAME="$RESOLVE_NAME${resolve_rest%%\{*}"
+  resolve_rest="${resolve_rest#*\{}"
+
+  # Both trims below are no-ops when there is no "}", so the placeholder and the
+  # remainder would come out as the same string: the text after the "{" would be
+  # appended twice, once expanded and once literally, and the name would look
+  # plausible.
+  if [[ "$resolve_rest" != *"}"* ]]; then
+    echo "ERROR: the naming pattern has a '{' that is never closed: $RESOLVE_PATTERN"
+    exit 1
+  fi
+
+  resolve_placeholder="${resolve_rest%%\}*}"
+  resolve_rest="${resolve_rest#*\}}"
+
+  # A trailing "?" marks the placeholder optional. The wizard collects fields the
   # developer may leave blank, and a blank one has to leave no trace: no empty
   # segment, no doubled hyphen, no failure.
   resolve_optional=0
-  if [[ "$resolve_field" == *\? ]]; then
+  if [[ "$resolve_placeholder" == *\? ]]; then
     resolve_optional=1
-    resolve_field="${resolve_field%\?}"
+    resolve_placeholder="${resolve_placeholder%\?}"
+  fi
+
+  # Checked after the "?" is stripped, and before anything is looked up: the paths
+  # are parsed rather than evaluated as jq, so a placeholder that is not a dotted
+  # path is a rule problem, and saying so beats an empty lookup that gets blamed
+  # on the developer's metadata.
+  if [[ ! "$resolve_placeholder" =~ ^(\.[A-Za-z0-9_-]+)+$ ]]; then
+    echo "ERROR: '$resolve_placeholder' is not a path a naming_pattern can use. A placeholder is a dotted path against the hook's context -- {.application.metadata.application.domain}, {.namespace.slug} -- with an optional trailing '?'."
+    exit 1
   fi
 
   # Only scalars can become a path segment. jq renders an array or an object
   # across several lines, and those newlines used to end up inside the repository
   # name, which the provider then rejects with a message that mentions nothing
-  # about metadata.
-  resolve_kind=$(jq -r --arg f "$resolve_field" '.[$f] | type' <<<"$RESOLVE_VALUES")
+  # about the rule.
+  resolve_kind=$(resolve_path_type "$resolve_placeholder")
 
   if [[ "$resolve_kind" == "array" || "$resolve_kind" == "object" ]]; then
-    echo "ERROR: the metadata field '$resolve_field' is a $resolve_kind; only a single value can become part of a repository name."
+    echo "ERROR: '$resolve_placeholder' holds an $resolve_kind; only a single value can become part of a repository name."
     exit 1
   fi
 
-  resolve_value=$(resolve_metadata_value "$resolve_field")
+  resolve_value=$(resolve_path_value "$resolve_placeholder")
   resolve_segment=$(resolve_slug "$resolve_value")
 
   # Absent is what "optional" is about. Present but unusable is a different thing
   # and is always an error, optional or not -- skipping it would silently drop an
   # answer the developer gave.
   if [[ -n "$resolve_value" ]]; then
-    resolve_reject_unusable "$resolve_field" "$resolve_value" "$resolve_segment"
-  fi
-
-  if [[ -z "$resolve_segment" ]]; then
-    if [[ "$resolve_optional" -eq 1 ]]; then
-      continue
-    fi
-
-    # A required field that is missing would otherwise collapse into
-    # 'net-app--issuance'. Because this runs inside a before-create hook, that
-    # name would be baked into an application nobody can trace back to a
-    # repository. Fail loudly instead.
-    echo "ERROR: the metadata field '$resolve_field' is required to build the repository name for '$RESOLVE_ROOT_VALUE' but is empty or missing."
+    resolve_reject_unusable "$resolve_placeholder" "$resolve_value" "$resolve_segment"
+  elif [[ "$resolve_optional" -ne 1 ]]; then
+    # A required placeholder that is missing would otherwise collapse into
+    # 'net-app-issuance', one segment short and indistinguishable from a name
+    # that was meant to look like that. Because this runs inside a before-create
+    # hook, that name would be baked into an application nobody can trace back to
+    # a repository. Fail loudly instead.
+    echo "ERROR: '$resolve_placeholder' is required by the naming pattern but is empty or missing. Add a trailing '?' inside the placeholder if it is allowed to be blank."
     exit 1
   fi
 
-  RESOLVE_NAME="$RESOLVE_NAME-$resolve_segment"
-done <<<"$RESOLVE_FIELDS"
+  RESOLVE_NAME="$RESOLVE_NAME$resolve_segment"
+done
+
+RESOLVE_NAME="$RESOLVE_NAME$resolve_rest"
+
+# Slugified once more over the assembled string. The separators in a pattern are
+# literal text, so a placeholder that resolved to nothing leaves "--" behind and
+# a pattern ending in a separator leaves a trailing hyphen; the slug collapses
+# both. It is idempotent, so the segments slugified above pass through unchanged.
+RESOLVE_NAME=$(resolve_slug "$RESOLVE_NAME")
+
+# Every placeholder optional and every one of them blank leaves only separators,
+# which slug to nothing. Each was individually allowed to vanish, so nothing
+# failed on the way here, and the empty name used to be reported as derived and
+# handed to the provider.
+if [[ -z "$RESOLVE_NAME" ]]; then
+  echo "ERROR: branch $RESOLVE_MATCHED_INDEX of the naming rule left nothing to name the repository with. Its naming pattern is '$RESOLVE_PATTERN' and every placeholder in it resolved to nothing; at least one of them has to be required."
+  exit 1
+fi
+
 
 # The slug already guarantees GitHub's charset ([a-z0-9-]); the length is the
 # part a free-text metadata field can still blow past. Failing here names the

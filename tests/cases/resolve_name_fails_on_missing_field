@@ -1,8 +1,10 @@
 #!/bin/bash
-# A branch field the wizard did not fill in must stop the workflow naming that
-# field. Silently emitting an empty segment would produce 'net-app--issuance',
-# and because this runs inside a before-create hook the application would be
-# created pointing at a repository nobody can find.
+# A placeholder the wizard did not fill in, and that the pattern does not mark
+# optional, must stop the workflow naming that path. Silently leaving the segment
+# out would produce 'net-app-issuance' -- one short, and indistinguishable from
+# a name that was meant to look like that. Because this runs inside a
+# before-create hook the application would be created pointing at a repository
+# nobody can find.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT

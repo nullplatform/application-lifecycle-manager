@@ -24,11 +24,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   and returned a plausible wrong value instead of failing.
 
 ### Added
-- `REPOSITORY_NAME_RULE` derives the repository name from the metadata filled in when the
-  application is created, so the repository is born with the right name. Opt-in: without it the
-  name still comes from the application's `repository_url`. `REPOSITORY_NAME_RULE_B64` carries the
-  same document base64-encoded, for deployments that cannot put double quotes in an environment
-  variable. A field name ending in `?` is optional and leaves no trace when blank.
+- `REPOSITORY_NAME_RULE` builds the repository name from what the hook knows about the application,
+  so the repository is born with the right name. Opt-in: without it the name still comes from the
+  application's `repository_url`. The rule is a list of `branches`, tried in order, each with a
+  `condition` (an object of path -> expected value, all of which have to hold) and a
+  `naming_pattern` whose `{...}` placeholders are dotted paths into the hook's context:
+  `{.application.metadata.application.domain}`, `{.namespace.slug}`. A branch with no `condition`
+  matches anything and is the fallback. A placeholder ending in `?` is optional and leaves no trace
+  when blank -- the assembled name is slugified as a whole, so the separators around it close up.
+  Paths are parsed rather than evaluated as jq, so a rule cannot run an expression against the
+  context. `REPOSITORY_NAME_RULE_B64` carries the same document base64-encoded, for deployments that
+  cannot put double quotes in an environment variable; from terraform that is
+  `filebase64("rules.json")` -- `jsonencode(file(...))` hands the document over as a quoted string
+  and is rejected with a message that says so.
+- `scripts/base_context` exports `CONTEXT`: the notification merged with the account, namespace and
+  application documents it resolves. It is what the paths in `REPOSITORY_NAME_RULE` are resolved
+  against, and it is available to every later step.
 - The hook callback now carries a `callback_body`, which writes to the application without racing
   the 403 window an application being created answers to `np application update`. A derived
   `repository_url` reaches the entity through it; a failed or cancelled hook sends none.
