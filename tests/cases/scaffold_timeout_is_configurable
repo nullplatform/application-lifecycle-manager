@@ -1,0 +1,43 @@
+#!/bin/bash
+# The ceiling belongs to the operator: an installation whose scaffolding takes
+# longer raises it from the agent's extra_envs, without touching this repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+mkdir -p "$TEST_TMP/bin"
+args="$TEST_TMP/timeout-args"
+
+# Records how it was called, then runs what it was asked to run.
+cat > "$TEST_TMP/bin/timeout" <<EOS
+#!/bin/bash
+printf '%s\n' "\$*" > "$args"
+shift 3
+exec "\$@"
+EOS
+chmod +x "$TEST_TMP/bin/timeout"
+
+printf '#!/bin/bash\n' > "$TEST_TMP/orchestrator.sh"
+
+export PATH="$TEST_TMP/bin:$PATH"
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+# Default: fifteen minutes, and -k so a script deaf to TERM still goes.
+unset TRIGGER_SCAFFOLD_TIMEOUT
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+assert_contains "-k 30s 15m bash" "$(cat "$args")" || exit 1
+assert_contains "(timeout 15m)" || exit 1
+
+# Overridden from the agent.
+export TRIGGER_SCAFFOLD_TIMEOUT="42s"
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+assert_contains "-k 30s 42s bash" "$(cat "$args")" || exit 1
+
+# A value `timeout` cannot parse is caught here, where the message can name the
+# variable, instead of surfacing as its exit code 125.
+export TRIGGER_SCAFFOLD_TIMEOUT="quince minutos"
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+assert_contains "TRIGGER_SCAFFOLD_TIMEOUT must be a number of seconds" || exit 1

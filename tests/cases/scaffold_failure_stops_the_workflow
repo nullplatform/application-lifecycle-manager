@@ -1,0 +1,27 @@
+#!/bin/bash
+# A repository that CI starts building half-configured is worse than an
+# application that was not created, so a failing orchestrator is fatal.
+#
+# The message says the repository exists, because that is the part the operator
+# has to act on: a retry runs into validate_repository_does_not_exist until the
+# repository is removed.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+cat > "$TEST_TMP/orchestrator.sh" <<'EOS'
+#!/bin/bash
+echo "could not reach the internal package registry"
+exit 3
+EOS
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+
+# The orchestrator's own output reaches the hook: it is the only account of what
+# went wrong, and the developer reads it in the console.
+assert_contains "could not reach the internal package registry" || exit 1
+assert_contains "failed with status 3" || exit 1
+assert_contains "has to be removed" || exit 1

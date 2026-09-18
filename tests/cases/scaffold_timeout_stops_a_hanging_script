@@ -1,0 +1,30 @@
+#!/bin/bash
+# A hanging scaffolding is the worst failure this hook has: it is a `before` hook
+# and it fails closed, so nobody can create an application anywhere under the NRN
+# until it returns. The message says which variable raises the ceiling, because
+# the operator reading it is deciding exactly that.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+mkdir -p "$TEST_TMP/bin"
+
+# 124 is what `timeout` returns when it had to stop the command. Faked rather
+# than waited for: this asserts how the step reports it, not that coreutils works.
+cat > "$TEST_TMP/bin/timeout" <<'EOS'
+#!/bin/bash
+exit 124
+EOS
+chmod +x "$TEST_TMP/bin/timeout"
+
+printf '#!/bin/bash\nsleep 600\n' > "$TEST_TMP/orchestrator.sh"
+
+export PATH="$TEST_TMP/bin:$PATH"
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+export TRIGGER_SCAFFOLD_TIMEOUT="5s"
+
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+assert_contains "did not finish within 5s and was stopped" || exit 1
+assert_contains "Raise TRIGGER_SCAFFOLD_TIMEOUT" || exit 1
+assert_contains "has to be removed" || exit 1

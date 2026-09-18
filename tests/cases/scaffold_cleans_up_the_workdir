@@ -1,0 +1,29 @@
+#!/bin/bash
+# The agent host is long-lived and scaffolds every application that comes through
+# it, so whatever the orchestrator clones or unpacks cannot survive the run. The
+# step gives it a directory of its own and removes it afterwards -- without ever
+# looking at what went in, which is what keeps this agnostic.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+where="$TEST_TMP/where"
+
+cat > "$TEST_TMP/orchestrator.sh" <<EOS
+#!/bin/bash
+pwd > "$where"
+mkdir -p ./node_modules
+dd if=/dev/zero of=./big.bin bs=1024 count=8 2>/dev/null
+EOS
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+
+workdir=$(cat "$where")
+
+if [[ -d "$workdir" ]]; then
+  echo "  FAIL: $workdir outlived the step, leftovers and all"
+  exit 1
+fi

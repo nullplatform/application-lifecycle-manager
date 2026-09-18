@@ -8,6 +8,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
+- `TRIGGER_SCAFFOLD_SCRIPT` points `scaffold_repository` at a scaffolding script of the operator's
+  own, by absolute path on the agent host, so the step no longer has to be edited to be used.
+  Opt-in: without it the step stays a no-op. The script runs as a subprocess, in an empty working
+  directory that is removed afterwards, and receives the whole application document — this
+  repository reads nothing out of it, so which metadata decides what gets scaffolded is entirely
+  the script's business and two installations can branch on entirely different fields. A non-zero
+  exit stops the workflow. `CODE_REPOSITORY_PROVIDER` is now exported for it.
+- `TRIGGER_SCAFFOLD_INTERPRETER` runs that script under something other than bash -- `python3`,
+  `mise exec --`, any command line on the agent's PATH. Unset, an executable script runs on its own
+  shebang and a non-executable one on bash.
+- `TRIGGER_SCAFFOLD_TIMEOUT` caps how long the scaffolding may take, 15 minutes by default. This is
+  a `before` hook and it fails closed, so a script that hangs blocks application creation for the
+  whole NRN; the ceiling is on that blockade, not on the work. stdin is closed for the same reason,
+  and a script deaf to SIGTERM is killed thirty seconds later. Where `timeout` is missing from the
+  agent image the step says so and runs unbounded rather than refusing to scaffold.
 - Add rule engine to generate repository name
 - Add hook to call client-owned repository scaffolding script
 - Test suite for the GitHub code repository provider.
