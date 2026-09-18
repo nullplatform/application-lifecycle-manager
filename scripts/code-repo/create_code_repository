@@ -18,13 +18,22 @@ TEMPLATE_ID=$(echo "$APPLICATION" | jq -r '.template_id // empty' )
 
 # An installation can take the template chooser out of the console, so that every
 # application is scaffolded the same way and the templating happens in the hooks
-# instead. Those applications arrive with no template at all, which would
-# otherwise read as "importing a repository that already exists" -- the opposite
-# of what is happening -- and die at validate_repository_does_not_exist on a
-# repository nobody ever created.
-if [[ -z "$TEMPLATE_ID" && -n "$CODE_REPOSITORY_DEFAULT_TEMPLATE_ID" ]]; then
+# instead. CODE_REPOSITORY_DEFAULT_TEMPLATE_ID is the template those applications
+# get, and it OVERRIDES whatever they carry.
+#
+# Overrides, and not fills in: a console with the chooser removed still sends a
+# template_id -- the platform's global default -- so a variable that only applied
+# to an empty field was unreachable from the one installation it exists for. The
+# application's own template stays in charge wherever this is unset, which is
+# every installation that shows the chooser.
+if [[ -n "$CODE_REPOSITORY_DEFAULT_TEMPLATE_ID" ]]; then
+  if [[ -n "$TEMPLATE_ID" && "$TEMPLATE_ID" != "$CODE_REPOSITORY_DEFAULT_TEMPLATE_ID" ]]; then
+    echo "Overriding the application's template $TEMPLATE_ID with CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: $CODE_REPOSITORY_DEFAULT_TEMPLATE_ID"
+  else
+    echo "Using CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: $CODE_REPOSITORY_DEFAULT_TEMPLATE_ID"
+  fi
+
   TEMPLATE_ID="$CODE_REPOSITORY_DEFAULT_TEMPLATE_ID"
-  echo "Application carries no template, using CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: $TEMPLATE_ID"
 fi
 
 if [[ -n "$TEMPLATE_ID" ]]; then

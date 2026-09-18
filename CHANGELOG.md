@@ -32,6 +32,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - GitHub: `gh` is installed from the release tarball instead of `mise`, whose attestation check
   fails on the nullplatform agent image.
 
+### Fixed
+- `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` now overrides the template the application carries instead
+  of only filling in an empty one. It exists for installations that hide the template chooser, and
+  a console with the chooser hidden still sends a `template_id` — the platform's global default —
+  so the variable could never be reached from the one installation it was written for. Unset it
+  changes nothing and the application's own template is used, so an installation that shows the
+  chooser is unaffected. Installations that set it *and* show the chooser now have the developer's
+  choice overridden, which is the behaviour change.
+
 ## [0.3.0] - 2026-08-04
 
 ### Added

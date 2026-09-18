@@ -146,27 +146,30 @@ The code repository workflow is composed of the following tasks:
 - **Trigger initial CI build**  
   Optionally kicks off a first CI build so you can deploy your application immediately after creation.
 
-#### A default template for applications that carry none
+#### One template for the whole installation
 
 The dispatcher chooses between its `create` and `import` strategies by whether the application has
-a `template_id`. An installation that removes the template chooser from its console produces
-applications with none, which reads as "importing a repository that already exists" — the opposite
-of what is happening — and the run dies at `validate_repository_does_not_exist` on a repository
-nobody ever created.
+a `template_id`. An installation that removes the template chooser from its console has no way to
+say which template it wants, and depending on the console it gets either no template at all — which
+reads as "importing a repository that already exists", the opposite of what is happening, and dies
+at `validate_repository_does_not_exist` on a repository nobody ever created — or the platform's
+global default, which is nobody's choice either.
 
-`CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` fills that gap. Set it on the agent and an application
-without a template is created from that one instead:
+`CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` settles both. Set it on the agent and it is the template every
+application is created from:
 
 ```yaml
 extra_envs:
   CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: "1855672260"
 ```
 
-An application that carries its own `template_id` is never overridden. Unset, nothing changes.
+**It overrides whatever the application carries**, including a `template_id` the console filled in
+by itself. Unset, nothing changes and the application's own template is used, so an installation
+that shows the chooser is unaffected.
 
 > **Setting this removes the import path for the whole installation.** The absence of a
 > `template_id` was the only signal the dispatcher had for "this application is importing an
-> existing repository", and the default gives that same absence a second meaning. The variable is
+> existing repository", and this variable overrides that signal. It is
 > agent-level, not per-application, so once it is set **every** application resolves to `create`,
 > and one that points at a repository that already exists now fails at
 > `validate_repository_does_not_exist` with *"Repository already exists but strategy is set to
