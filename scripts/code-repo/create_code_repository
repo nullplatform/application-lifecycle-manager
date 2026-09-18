@@ -164,4 +164,9 @@ export CODE_REPOSITORY
 export CODE_REPOSITORY_SCRIPT_PATH
 export CODE_REPOSITORY_COLLABORATORS
 
+# Exported for scaffold_repository's orchestrator, which runs in a subprocess and
+# would otherwise have to read the provider out of CODE_REPOSITORY_SCRIPT_PATH --
+# a path into this repository's scripts/, and no part of anyone's contract.
+export CODE_REPOSITORY_PROVIDER
+
 np service workflow exec --workflow workflows/create_code_repository.yaml

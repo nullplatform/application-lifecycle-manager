@@ -1,0 +1,35 @@
+#!/bin/bash
+# Not every orchestrator is bash. TRIGGER_SCAFFOLD_INTERPRETER names what runs it,
+# and it is a command LINE rather than a binary: `mise exec --` is three words
+# before the script appears, and a value that arrived as one string has to reach
+# the kernel as three arguments.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+mkdir -p "$TEST_TMP/bin"
+seen="$TEST_TMP/seen"
+
+cat > "$TEST_TMP/bin/mise" <<EOS
+#!/bin/bash
+printf '%s\n' "\$*" > "$seen"
+EOS
+chmod +x "$TEST_TMP/bin/mise"
+
+printf '#!/bin/bash\n' > "$TEST_TMP/orchestrator.sh"
+
+export PATH="$TEST_TMP/bin:$PATH"
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+export TRIGGER_SCAFFOLD_INTERPRETER="mise exec --"
+
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+
+assert_contains "exec -- $TEST_TMP/orchestrator.sh" "$(cat "$seen")" || exit 1
+
+# A misconfigured interpreter is named for what it is. Left to the kernel it
+# would surface as a 127 with no hint of which variable to fix.
+export TRIGGER_SCAFFOLD_INTERPRETER="rubby"
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+assert_contains "starts with 'rubby', which is not on the agent host's PATH" || exit 1

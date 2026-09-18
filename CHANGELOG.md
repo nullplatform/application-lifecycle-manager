@@ -10,6 +10,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Added
 - Add rule engine to generate repository name (`REPOSITORY_NAME_RULE` / `REPOSITORY_NAME_RULE_B64`).
 - Add hooks to call client-owned scripts: `approve_creation` and `scaffold_repository` (no-op by default).
+- Scaffold repositories from a client-owned script (`TRIGGER_SCAFFOLD_SCRIPT`), with an optional
+  interpreter and timeout (`TRIGGER_SCAFFOLD_INTERPRETER`, `TRIGGER_SCAFFOLD_TIMEOUT`).
 - The hook callback carries a `callback_body`, so a derived `repository_url` reaches the application.
 - `alm_cancel` closes the hook as `cancelled` instead of `failed`.
 - `GITHUB_APP_SECRET_ID` reads the GitHub App credentials from a secrets store at run time.
