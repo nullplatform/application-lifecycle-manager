@@ -1,0 +1,52 @@
+#!/bin/bash
+# The paths in a rule are absolute against the hook's whole context, not against
+# the application alone, so a rule can name a repository after things the
+# application document does not carry -- the namespace it lives in, the account.
+# That is the difference between this rule format and the metadata-only one it
+# replaced.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+REPOSITORY_NAME_RULE=$(jq -nc \
+  '{branches: [{naming_pattern: "{.namespace.slug}-{.application.slug}-{.application.metadata.application.domain}"}]}')
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET domain=fire | jq -c '. + {slug: "checkout"}')
+export APPLICATION
+
+failed=0
+
+# scripts/base_context publishes CONTEXT for every later step; this is the path
+# a real hook takes.
+CONTEXT=$(wizard_context seguros)
+export CONTEXT
+
+got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$got" != "seguros-checkout-fire" ]]; then
+  echo "  FAIL: from CONTEXT, expected 'seguros-checkout-fire', got '$got'"
+  failed=1
+fi
+
+# An installation still running an older base_context has no CONTEXT to inherit.
+# The step assembles the same shape from the documents that step does export,
+# rather than failing over a variable the operator never sees.
+unset CONTEXT
+NAMESPACE=$(jq -nc '{slug: "seguros"}')
+export NAMESPACE
+
+got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$got" != "seguros-checkout-fire" ]]; then
+  echo "  FAIL: without CONTEXT, expected 'seguros-checkout-fire', got '$got'"
+  failed=1
+fi
+
+exit "$failed"

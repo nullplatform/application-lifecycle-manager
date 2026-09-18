@@ -1,0 +1,67 @@
+#!/bin/bash
+# A condition can name more than one path, and all of them have to hold: the
+# wizard's branches are not always told apart by a single answer. Two branches
+# here overlap on purpose -- the first is the narrow one -- so this also pins
+# down that the FIRST matching branch wins and a later, broader one cannot
+# shadow it.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+md=".application.metadata.application"
+
+REPOSITORY_NAME_RULE=$(jq -nc --arg md "$md" '{
+  branches: [
+    {
+      condition: { "\($md).architecture": ".NET", "\($md).dotnet_type": "INT" },
+      naming_pattern: "integration-{\($md).domain}"
+    },
+    {
+      condition: { "\($md).architecture": ".NET" },
+      naming_pattern: "app-{\($md).domain}"
+    },
+    {
+      naming_pattern: "other-{\($md).domain}"
+    }
+  ]
+}')
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+expect() {
+  local want="$1"; shift
+  local got
+
+  APPLICATION=$(wizard_metadata "$@")
+  export APPLICATION
+
+  got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+  if [[ "$got" != "$want" ]]; then
+    echo "  FAIL: $*"
+    echo "        expected '$want', got '$got'"
+    failed=1
+  fi
+}
+
+# Both keys hold. The broader .NET branch below also matches, so anything but
+# 'integration-motor' means the walk did not stop at the first match.
+expect integration-motor architecture=.NET dotnet_type=INT domain=motor
+
+# The first key holds and the second does not: the narrow branch is skipped.
+expect app-motor architecture=.NET dotnet_type=APP domain=motor
+
+# A key the metadata does not carry at all cannot satisfy a condition.
+expect app-motor architecture=.NET domain=motor
+
+# Neither branch's condition holds: the entry with no condition catches it.
+expect other-motor architecture=Node domain=motor
+
+exit "$failed"

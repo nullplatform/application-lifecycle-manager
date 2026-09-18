@@ -1,0 +1,65 @@
+#!/bin/bash
+# A condition path that resolves to nothing does not fail -- the branch simply
+# does not match -- so with a catch-all in the rule a misspelt path falls through
+# to it and the repository is created under the fallback name. Exit 0, no
+# warning, and the name is baked in by a before-create hook.
+#
+# The path is well formed, so no amount of shape checking catches it: it is a
+# wrong path, not a malformed one. What the step can do is say which branch it
+# used, so the fall-through is visible in the hook messages instead of being
+# indistinguishable from an intended match.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+md=".application.metadata.application"
+
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '. + {slug: "checkout"}')
+export APPLICATION
+export NAMESPACE='{"slug":"seguros"}'
+
+failed=0
+
+# Same rule twice; the second has one letter changed in the condition's path.
+rule() {
+  jq -nc --arg md "$md" --arg field "$1" '{branches: [
+    {condition: {"\($md).\($field)": ".NET"},
+     naming_pattern: "{\($md).architecture}-{\($md).dotnet_type}-{\($md).domain}"},
+    {naming_pattern: "{.namespace.slug}-{.application.slug}"}
+  ]}'
+}
+
+unset REPOSITORY_NAME
+REPOSITORY_NAME_RULE=$(rule architecture)
+export REPOSITORY_NAME_RULE
+run_code_repo_step resolve_repository_name
+
+if [[ "$STEP_OUTPUT" != *"branch 0"* ]]; then
+  echo "  FAIL: the matched branch was not named:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+# The typo. It still succeeds -- that is the point, it cannot be detected -- but
+# the log has to say the fallback is what produced the name.
+unset REPOSITORY_NAME
+REPOSITORY_NAME_RULE=$(rule architectura)
+export REPOSITORY_NAME_RULE
+run_code_repo_step resolve_repository_name
+
+if [[ "$STEP_STATUS" != 0 ]]; then
+  echo "  FAIL: a well-formed but wrong condition path is not an error, got $STEP_STATUS"
+  failed=1
+fi
+if [[ "$STEP_OUTPUT" != *"fallback"* ]]; then
+  echo "  FAIL: falling through to the catch-all was not reported:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"
