@@ -12,6 +12,25 @@ NAMESPACE=$(np namespace read --format json --id "$NAMESPACE_ID")
 
 APPLICATION=$(np application read --format json --id "$APPLICATION_ID")
 
+# Checked here, one by one, because every later step is entitled to assume CONTEXT
+# is there and well formed. `np` reports a failed read on stderr and prints
+# nothing on stdout, so an unchecked failure reached --argjson below as an empty
+# string: jq failed, CONTEXT came out empty, and the steps that read it blamed
+# whatever they happened to look up first. Named individually because the three
+# documents are indistinguishable once merged.
+base_context_require() {
+  local label="$1" document="$2"
+
+  if ! jq -e . >/dev/null 2>&1 <<<"$document"; then
+    echo "ERROR: could not read the $label for $NRN, so the hook context cannot be built. Response: ${document:-<empty>}"
+    exit 1
+  fi
+}
+
+base_context_require account "$ACCOUNT"
+base_context_require namespace "$NAMESPACE"
+base_context_require application "$APPLICATION"
+
 APPLICATION_SLUG=$(echo "$APPLICATION" | jq -r .slug)
 NAMESPACE_SLUG=$(echo "$NAMESPACE" | jq -r .slug)
 

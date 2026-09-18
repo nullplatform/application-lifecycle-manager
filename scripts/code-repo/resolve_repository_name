@@ -133,38 +133,8 @@ resolve_reject_unusable() {
 # `.application.metadata.application.domain`, `.namespace.slug` -- so a rule can
 # name anything the hook already knows, not just the application's metadata.
 #
-# Assembled here when CONTEXT is absent so the step still works on its own: an
-# installation running an older scripts/base_context has no CONTEXT to inherit,
-# and failing for that would take the naming feature down over a variable the
-# operator never sees.
+# scripts/base_context builds it, and checks it, before any step runs.
 RESOLVE_CONTEXT="$CONTEXT"
-
-if [[ -z "$RESOLVE_CONTEXT" ]]; then
-  # 2>/dev/null because the failure is reported below, with the variable named.
-  # Bare, jq prints `invalid JSON text passed to --argjson` and nothing about
-  # which of the three documents was the bad one.
-  RESOLVE_CONTEXT=$(jq -nc \
-    --argjson application "${APPLICATION:-null}" \
-    --argjson namespace "${NAMESPACE:-null}" \
-    --argjson account "${ACCOUNT:-null}" \
-    '{application: $application, namespace: $namespace, account: $account}' 2>/dev/null)
-fi
-
-# Checked once, here, because every lookup below swallows jq's errors so that a
-# path leading nowhere reads as "absent". That swallowing used to hide a broken
-# context too: every path came back empty and the step blamed the first field the
-# pattern asked for -- a field the developer did fill in, in a message they cannot
-# act on. scripts/base_context builds CONTEXT from three `np ... read` calls and
-# checks none of them, so a transient API failure arrives here as garbage.
-if ! jq -e 'type == "object" and .application != null' >/dev/null 2>&1 <<<"$RESOLVE_CONTEXT"; then
-  echo "ERROR: the hook context is missing or unusable, so there is nothing to build a repository name from."
-  if [[ -n "$CONTEXT" ]]; then
-    echo "CONTEXT is set but is not a JSON object carrying an application. Check scripts/base_context and the 'np account/namespace/application read' calls it makes."
-  else
-    echo "CONTEXT is unset and the fallback could not be assembled from APPLICATION, NAMESPACE and ACCOUNT -- at least one of them is not valid JSON. Check the 'np ... read' calls in scripts/base_context."
-  fi
-  exit 1
-fi
 
 # resolve_path_value PATH -- the scalar the context carries at PATH, empty when
 # the path leads nowhere.

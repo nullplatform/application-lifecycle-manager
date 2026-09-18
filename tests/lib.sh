@@ -168,9 +168,36 @@ run_script_step() {
   STEP_STATUS=$?
 }
 
+# The steps under test read $CONTEXT. In the workflow scripts/base_context builds
+# it, from the account, namespace and application documents, before any of them
+# run -- so a step is entitled to assume it is there, and none of them assembles
+# one of its own.
+#
+# These helpers stand in for that step, which is what lets a case set only
+# $APPLICATION. Rebuilt on every call rather than once: a case that loops over
+# several applications -- most of the naming ones do -- would otherwise keep the
+# context built for the first one and assert against the wrong document.
+# A case that builds its own CONTEXT keeps it.
+__lib_base_context() {
+  if [[ -n "${CONTEXT:-}" && -z "${__LIB_CONTEXT_SYNTHETIC:-}" ]]; then
+    return 0
+  fi
+
+  CONTEXT=$(jq -nc \
+    --argjson application "${APPLICATION:-null}" \
+    --argjson namespace "${NAMESPACE:-null}" \
+    --argjson account "${ACCOUNT:-null}" \
+    '{application: $application, namespace: $namespace, account: $account}')
+
+  export CONTEXT
+  __LIB_CONTEXT_SYNTHETIC=1
+}
+
 # run_code_repo_step NAME -> STEP_OUTPUT, STEP_STATUS
 run_code_repo_step() {
   local __lib_step="$1"
+
+  __lib_base_context
 
   # shellcheck disable=SC1090
   STEP_OUTPUT=$(cd "$REPO_ROOT" && source "scripts/code-repo/$__lib_step" 2>&1)
@@ -180,6 +207,8 @@ run_code_repo_step() {
 # capture_code_repo_export NAME VAR -> the value the step exported into VAR
 capture_code_repo_export() {
   local __lib_step="$1" __lib_var="$2"
+
+  __lib_base_context
 
   (
     cd "$REPO_ROOT" || exit 1
@@ -321,9 +350,10 @@ JSON
 }
 
 # wizard_context [NAMESPACE_SLUG] -- the $CONTEXT base_context builds, wrapped
-# around whatever $APPLICATION currently holds. Only the cases that reach outside
-# the application document need it; the step assembles the same shape itself when
-# CONTEXT is unset, which is what keeps the rest of the cases to one variable.
+# around whatever $APPLICATION currently holds. A case only needs this when it
+# cares about what is OUTSIDE the application document -- a namespace slug the
+# name is built from, say. Otherwise the step helpers below stand in for
+# base_context and build one from $APPLICATION.
 wizard_context() {
   jq -nc --argjson app "$APPLICATION" --arg ns "${1:-acme}" \
     '{application: $app, namespace: {slug: $ns}, account: {slug: "root"}}'
