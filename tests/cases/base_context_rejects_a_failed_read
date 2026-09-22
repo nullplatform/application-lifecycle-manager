@@ -54,4 +54,58 @@ expect_rejected "an account that does not resolve"     account
 expect_rejected "a namespace that does not resolve"    namespace
 expect_rejected "an application that does not resolve" application
 
+# An NRN that does not parse leaves the ids empty. The read that fails then has
+# to say so, or the operator goes looking at the API instead of the NRN.
+export NP_ACTION_CONTEXT='{"notification":{"nrn":"not-an-nrn"}}'
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+# `np ... read --id ""`: what the CLI does without an id.
+echo "error: id is required" >&2
+exit 1
+STUB
+chmod +x "$TEST_TMP/np"
+
+# shellcheck disable=SC1091
+output=$(cd "$REPO_ROOT" && source scripts/base_context 2>&1)
+status=$?
+
+if [[ "$status" -eq 0 || "$output" != *"id '<empty>'"* || "$output" != *"not-an-nrn"* ]]; then
+  echo "  FAIL: an NRN that does not parse must stop the workflow and show the empty id and the NRN, got $status:"
+  printf '%s\n' "$output" | sed 's/^/        /'
+  failed=1
+fi
+
+# Every read succeeds and CONTEXT still cannot be built: jq on an empty
+# NP_ACTION_CONTEXT prints nothing and exits 0, and on a malformed one it fails.
+# Either way CONTEXT used to be exported empty, and the naming rule then read
+# every path as absent and quietly took its fallback.
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+echo '{"slug": "something"}'
+STUB
+chmod +x "$TEST_TMP/np"
+
+expect_bad_action_context() {
+  local what="$1" needle="$2"
+
+  # shellcheck disable=SC1091
+  output=$(cd "$REPO_ROOT" && source scripts/base_context 2>&1)
+  status=$?
+
+  if [[ "$status" -eq 0 || "$output" != *"$needle"* ]]; then
+    echo "  FAIL: $what must stop the workflow mentioning '$needle', got $status:"
+    printf '%s\n' "$output" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+export NP_ACTION_CONTEXT=""
+expect_bad_action_context "an empty NP_ACTION_CONTEXT" "NP_ACTION_CONTEXT is empty"
+
+export NP_ACTION_CONTEXT='{"notification": '
+expect_bad_action_context "a truncated NP_ACTION_CONTEXT" "NP_ACTION_CONTEXT is not a JSON object"
+
+export NP_ACTION_CONTEXT='["not", "an", "object"]'
+expect_bad_action_context "an NP_ACTION_CONTEXT that is a list" "NP_ACTION_CONTEXT is not a JSON object"
+
 exit "$failed"

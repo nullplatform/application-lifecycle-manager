@@ -210,8 +210,9 @@ quotes breaks the YAML before the agent starts.
 ```
 
 `branches` is a list, tried in order, and the **first** entry whose `condition` holds wins. A
-`condition` is an object of path → expected value; **all** of its entries have to match, compared as
-exact strings. An entry with no `condition` matches anything, which makes it the fallback — and only
+`condition` is an object of path → expected value; **all** of its entries have to match. Two numbers
+are compared as numbers (`3` matches `3.0`); anything else is compared as exact strings, so `3` also
+matches the `"3"` a metadata form stores. An entry with no `condition` matches anything, which makes it the fallback — and only
 useful as the last entry, where it cannot shadow the ones after it. If nothing matches and there is
 no fallback, the hook stops and prints what each condition compared against.
 
@@ -243,7 +244,9 @@ which is not necessarily the entity name.
 
 A path is a dotted path and nothing else: it is parsed, not evaluated as a jq program, so `.a | keys`
 or `.a[0]` is refused as a rule problem rather than run. That applies to a condition's keys exactly
-as it does to a placeholder — including the leading dot, which is required in both.
+as it does to a placeholder — including the leading dot, which is required in both. Every branch is
+checked when the rule is read, not only the one that wins, so a bad path in a branch no application
+has matched yet still stops the hook.
 
 ##### Optional placeholders
 

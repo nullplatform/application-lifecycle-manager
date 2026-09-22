@@ -74,6 +74,18 @@ expect_rejected "a path that is a jq expression" \
 expect_rejected "a placeholder that is never closed" \
   "{\"branches\":[{\"naming_pattern\":\"{$md.domain\"}]}" "closed"
 
+# The branch that wins here is the first one, and it is fine. The bad
+# placeholders are in a branch this application never reaches: checked only on
+# expansion, they loaded without complaint and waited for the first application
+# that did match that branch, to fail inside its before-create hook.
+expect_rejected "a jq expression in a branch that does not win" \
+  "{\"branches\":[{\"naming_pattern\":\"{$md.domain}\"},{\"naming_pattern\":\"{.application.metadata | keys}\"}]}" \
+  "branch 1 has a placeholder"
+
+expect_rejected "an unclosed placeholder in a branch that does not win" \
+  "{\"branches\":[{\"naming_pattern\":\"{$md.domain}\"},{\"naming_pattern\":\"{$md.domain\"}]}" \
+  "branch 1 has a naming_pattern with a \"{\" that is never closed"
+
 # Every other scalar works as a condition value -- string, number, boolean -- and
 # a list or an object is refused above. null was the one that passed the shape
 # check and could then never match: `null | tostring` is "null" and an absent

@@ -8,14 +8,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
-- Add rule engine to generate repository name
-- Add hook to call client-owned repository scaffolding script
+- Add rule engine to generate repository name (`REPOSITORY_NAME_RULE` / `REPOSITORY_NAME_RULE_B64`).
+- Add hooks to call client-owned scripts: `approve_creation` and `scaffold_repository` (no-op by default).
+- The hook callback carries a `callback_body`, so a derived `repository_url` reaches the application.
+- `alm_cancel` closes the hook as `cancelled` instead of `failed`.
+- `GITHUB_APP_SECRET_ID` reads the GitHub App credentials from a secrets store at run time.
+- `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` gives applications created without a template a default one.
+- Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses the template's pipeline file.
+- Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build.
 - Test suite for the GitHub code repository provider.
 
 ### Fixed
 - A template that does not resolve now stops the workflow instead of creating an empty repository.
 - GitHub: `gh` is installed from the release tarball instead of `mise`, whose attestation check
   fails on the nullplatform agent image.
+- Test helpers `capture_export` and `run_step` no longer collide with variables in the script under test.
 
 ## [0.3.0] - 2026-08-04
 

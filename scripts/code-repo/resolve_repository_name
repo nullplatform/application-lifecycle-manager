@@ -1,7 +1,8 @@
 #!/bin/bash
 #
-# Derives the repository name from the metadata the developer filled in when the
-# application was created, so the repository is born with the right name.
+# Derives the repository name from what the hook knows about the application --
+# the metadata the developer filled in, its namespace, its account -- so the
+# repository is born with the right name.
 #
 # Opt-in: without REPOSITORY_NAME_RULE the step does nothing and the dispatcher
 # keeps deriving the name from the application's repository_url.
@@ -162,6 +163,25 @@ resolve_path_type() {
   ' <<<"$RESOLVE_CONTEXT" 2>/dev/null
 }
 
+# resolve_condition_holds PATH EXPECTED_JSON -- whether the context carries the
+# expected value at PATH.
+#
+# Two numbers are compared as numbers: jq 1.7 renders `3.0 | tostring` as "3.0",
+# so a rule saying 3 used to fall through against a context carrying 3.0. Every
+# other pair is compared as strings, which keeps a rule's 3 matching the "3" a
+# metadata form stores, and an absent path reads as "" -- as it does everywhere
+# else in this step.
+resolve_condition_holds() {
+  jq -e --arg p "$1" --argjson want "$2" '
+    (($p | ltrimstr(".") | split(".")) as $parts | getpath($parts)) as $got
+    | if ($got | type) == "number" and ($want | type) == "number" then
+        $got == $want
+      else
+        (if $got == null then "" else $got | tostring end) == ($want | tostring)
+      end
+  ' >/dev/null <<<"$RESOLVE_CONTEXT" 2>/dev/null
+}
+
 # A path is a dotted path and nothing else. Held in one variable because both
 # sides need it and they used to disagree: the placeholders were checked against
 # it and the condition keys were not, so `application.metadata.x` -- no leading
@@ -207,6 +227,10 @@ fi
 # INDEX, which is what the operator needs to find it in a rule that is several
 # branches long. jq's if/elif is lazy, so `.naming_pattern` is only reached on an
 # entry already known to be an object.
+#
+# Every branch's placeholders are checked here, not just the winner's when it is
+# expanded: otherwise a bad one loads without complaint and only fails when an
+# application first matches that branch, inside the before-create hook.
 RESOLVE_SHAPE_ERROR=$(jq -r --arg pathre "$RESOLVE_PATH_RE" '
   [ .branches
     | to_entries[]
@@ -224,6 +248,10 @@ RESOLVE_SHAPE_ERROR=$(jq -r --arg pathre "$RESOLVE_PATH_RE" '
         "branch \($i) compares a condition against null, which can never match: an absent path yields the empty string, not null. Only a string, a number or a boolean can be compared"
       elif ((($b.condition // {}) | keys_unsorted | map(select(test($pathre) | not)) | first) != null) then
         "branch \($i) has a condition on \(($b.condition | keys_unsorted | map(select(test($pathre) | not)) | first)), which is not a path a naming rule can use. A path is dotted, like .application.metadata.application.domain or .namespace.slug"
+      elif ($b.naming_pattern | test("\\{[^}]*$")) then
+        "branch \($i) has a naming_pattern with a \"{\" that is never closed: \($b.naming_pattern)"
+      elif (([$b.naming_pattern | scan("\\{([^}]*)\\}")[0] | rtrimstr("?") | select(test($pathre) | not)] | first) != null) then
+        "branch \($i) has a placeholder {\([$b.naming_pattern | scan("\\{([^}]*)\\}")[0] | rtrimstr("?") | select(test($pathre) | not)] | first)} in its naming_pattern, which is not a path a naming rule can use. A placeholder is a dotted path against the hook context, like {.application.metadata.application.domain} or {.namespace.slug}, with an optional trailing ?"
       else empty end
   ] | first // empty
 ' <<<"$REPOSITORY_NAME_RULE")
@@ -248,10 +276,10 @@ while [[ "$resolve_index" -lt "$RESOLVE_BRANCH_COUNT" ]]; do
   while read -r resolve_cond_path; do
     [[ -z "$resolve_cond_path" ]] && continue
 
-    resolve_expected=$(jq -r --argjson i "$resolve_index" --arg k "$resolve_cond_path" \
-      '.branches[$i].condition[$k] | tostring' <<<"$REPOSITORY_NAME_RULE")
+    resolve_expected=$(jq -c --argjson i "$resolve_index" --arg k "$resolve_cond_path" \
+      '.branches[$i].condition[$k]' <<<"$REPOSITORY_NAME_RULE")
 
-    if [[ "$(resolve_path_value "$resolve_cond_path")" != "$resolve_expected" ]]; then
+    if ! resolve_condition_holds "$resolve_cond_path" "$resolve_expected"; then
       resolve_matched=0
       break
     fi
@@ -320,15 +348,8 @@ while [[ "$resolve_rest" == *"{"* ]]; do
   RESOLVE_NAME="$RESOLVE_NAME${resolve_rest%%\{*}"
   resolve_rest="${resolve_rest#*\{}"
 
-  # Both trims below are no-ops when there is no "}", so the placeholder and the
-  # remainder would come out as the same string: the text after the "{" would be
-  # appended twice, once expanded and once literally, and the name would look
-  # plausible.
-  if [[ "$resolve_rest" != *"}"* ]]; then
-    echo "ERROR: the naming pattern has a '{' that is never closed: $RESOLVE_PATTERN"
-    exit 1
-  fi
-
+  # The shape pass above has already refused a "{" that is never closed and a
+  # placeholder that is not a dotted path, so both trims below find their "}".
   resolve_placeholder="${resolve_rest%%\}*}"
   resolve_rest="${resolve_rest#*\}}"
 
@@ -339,15 +360,6 @@ while [[ "$resolve_rest" == *"{"* ]]; do
   if [[ "$resolve_placeholder" == *\? ]]; then
     resolve_optional=1
     resolve_placeholder="${resolve_placeholder%\?}"
-  fi
-
-  # Checked after the "?" is stripped, and before anything is looked up: the paths
-  # are parsed rather than evaluated as jq, so a placeholder that is not a dotted
-  # path is a rule problem, and saying so beats an empty lookup that gets blamed
-  # on the developer's metadata.
-  if [[ ! "$resolve_placeholder" =~ $RESOLVE_PATH_RE ]]; then
-    echo "ERROR: '$resolve_placeholder' is not a path a naming_pattern can use. A placeholder is a dotted path against the hook's context -- {.application.metadata.application.domain}, {.namespace.slug} -- with an optional trailing '?'."
-    exit 1
   fi
 
   # Only scalars can become a path segment. jq renders an array or an object
@@ -408,7 +420,7 @@ if [[ "${#RESOLVE_NAME}" -gt 100 ]]; then
   exit 1
 fi
 
-echo "Derived repository name from metadata: $RESOLVE_NAME"
+echo "Derived repository name: $RESOLVE_NAME"
 
 REPOSITORY_NAME="$RESOLVE_NAME"
 

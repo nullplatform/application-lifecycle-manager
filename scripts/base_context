@@ -18,18 +18,21 @@ APPLICATION=$(np application read --format json --id "$APPLICATION_ID")
 # string: jq failed, CONTEXT came out empty, and the steps that read it blamed
 # whatever they happened to look up first. Named individually because the three
 # documents are indistinguishable once merged.
+#
+# The id is in the message because an NRN that did not parse leaves it empty, and
+# "read failed" alone sends the operator to the API instead of to the NRN.
 base_context_require() {
-  local label="$1" document="$2"
+  local label="$1" id="$2" document="$3"
 
   if ! jq -e . >/dev/null 2>&1 <<<"$document"; then
-    echo "ERROR: could not read the $label for $NRN, so the hook context cannot be built. Response: ${document:-<empty>}"
+    echo "ERROR: could not read the $label (id '${id:-<empty>}') for NRN '${NRN:-<empty>}', so the hook context cannot be built. Response: ${document:-<empty>}"
     exit 1
   fi
 }
 
-base_context_require account "$ACCOUNT"
-base_context_require namespace "$NAMESPACE"
-base_context_require application "$APPLICATION"
+base_context_require account "$ACCOUNT_ID" "$ACCOUNT"
+base_context_require namespace "$NAMESPACE_ID" "$NAMESPACE"
+base_context_require application "$APPLICATION_ID" "$APPLICATION"
 
 APPLICATION_SLUG=$(echo "$APPLICATION" | jq -r .slug)
 NAMESPACE_SLUG=$(echo "$NAMESPACE" | jq -r .slug)
@@ -39,6 +42,23 @@ CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq \
   --argjson application "$APPLICATION" \
   --argjson account "$ACCOUNT" \
   '.notification + {namespace: $namespace, application: $application, account: $account}')
+
+# The three documents are checked above, but the merge itself can still come out
+# empty: jq on an empty NP_ACTION_CONTEXT prints nothing and exits 0, and on a
+# malformed one it fails with CONTEXT left empty. Later steps read CONTEXT with
+# jq's errors swallowed -- a path leading nowhere reads as "absent" -- so an empty
+# one would not fail there, it would quietly send the naming rule to its fallback.
+#
+# NP_ACTION_CONTEXT is not echoed: it carries the notification, callback url
+# included, and the hook messages are visible to the developer.
+if ! jq -e 'type == "object" and .application != null' >/dev/null 2>&1 <<<"$CONTEXT"; then
+  if [[ -z "$NP_ACTION_CONTEXT" ]]; then
+    echo "ERROR: NP_ACTION_CONTEXT is empty, so the hook context cannot be built."
+  else
+    echo "ERROR: NP_ACTION_CONTEXT is not a JSON object, so the hook context cannot be built."
+  fi
+  exit 1
+fi
 
 export ACCOUNT_ID
 

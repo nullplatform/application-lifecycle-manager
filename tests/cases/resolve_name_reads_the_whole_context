@@ -35,17 +35,44 @@ if [[ "$got" != "seguros-checkout-fire" ]]; then
   failed=1
 fi
 
-# An installation still running an older base_context has no CONTEXT to inherit.
-# The step assembles the same shape from the documents that step does export,
-# rather than failing over a variable the operator never sees.
-unset CONTEXT
-NAMESPACE=$(jq -nc '{slug: "seguros"}')
-export NAMESPACE
+# A condition reads the same context, so a branch can be picked by where the
+# application lives rather than by anything the developer answered.
+REPOSITORY_NAME_RULE=$(jq -nc '{branches: [
+  {condition: {".namespace.slug": "seguros", ".account.slug": "root"}, naming_pattern: "ins-{.application.slug}"},
+  {condition: {".namespace.slug": "banca"}, naming_pattern: "bank-{.application.slug}"},
+  {naming_pattern: "{.application.slug}"}
+]}')
+export REPOSITORY_NAME_RULE
 
+expect_from_namespace() {
+  local ns="$1" want="$2" got
+
+  CONTEXT=$(wizard_context "$ns")
+  export CONTEXT
+
+  got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+  if [[ "$got" != "$want" ]]; then
+    echo "  FAIL: in namespace '$ns', expected '$want', got '$got'"
+    failed=1
+  fi
+}
+
+# .namespace and .account both hold.
+expect_from_namespace seguros ins-checkout
+# Only the .namespace one of the second branch.
+expect_from_namespace banca bank-checkout
+# Neither: the fallback.
+expect_from_namespace retail checkout
+
+# The account is part of the first branch's condition: another account in the
+# same namespace slug does not match it.
+CONTEXT=$(wizard_context seguros | jq -c '.account.slug = "other"')
+export CONTEXT
 got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
 
-if [[ "$got" != "seguros-checkout-fire" ]]; then
-  echo "  FAIL: without CONTEXT, expected 'seguros-checkout-fire', got '$got'"
+if [[ "$got" != "checkout" ]]; then
+  echo "  FAIL: a condition on .account.slug was ignored, got '$got'"
   failed=1
 fi
 
