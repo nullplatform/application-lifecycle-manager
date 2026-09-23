@@ -1,0 +1,39 @@
+#!/bin/bash
+# The ceiling does not depend on a `timeout` binary. It used to: an agent image
+# without coreutils ran the script unbounded, with a warning, and one with
+# busybox's got a ceiling that did not hold. The step enforces it itself now, so
+# this runs on a PATH that has no `timeout` at all and still expects the stop.
+#
+# The curated PATH is the point: on CI `timeout` exists, so without it this case
+# would pass whether or not the step still leaned on it.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+mkdir -p "$TEST_TMP/nobin"
+for binary in bash mktemp mkdir rm sleep; do
+  ln -s "$(command -v "$binary")" "$TEST_TMP/nobin/$binary"
+done
+
+printf '#!/bin/bash\necho starting\nsleep 20\n' > "$TEST_TMP/orchestrator.sh"
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+export TRIGGER_SCAFFOLD_TIMEOUT="1s"
+
+FULL_PATH="$PATH"
+
+# Replacing the search path is the assertion, not a slip.
+# shellcheck disable=SC2123
+PATH="$TEST_TMP/nobin"
+started=$SECONDS
+run_code_repo_step scaffold_repository
+took=$((SECONDS - started))
+PATH="$FULL_PATH"
+
+assert_status 1 || exit 1
+assert_contains "did not finish within 1s and was stopped" || exit 1
+
+if [[ "$took" -gt 8 ]]; then
+  echo "  FAIL: with no 'timeout' on the PATH the step took ${took}s against a 1s ceiling"
+  exit 1
+fi

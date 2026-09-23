@@ -5,55 +5,40 @@ source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
 
-mkdir -p "$TEST_TMP/bin"
-args="$TEST_TMP/timeout-args"
-
-# Records how it was called, then runs what it was asked to run.
-cat > "$TEST_TMP/bin/timeout" <<EOS
-#!/bin/bash
-printf '%s\n' "\$*" > "$args"
-shift 3
-exec "\$@"
-EOS
-chmod +x "$TEST_TMP/bin/timeout"
-
 printf '#!/bin/bash\n' > "$TEST_TMP/orchestrator.sh"
-
-export PATH="$TEST_TMP/bin:$PATH"
 export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
 
-# Default: fifteen minutes, and -k so a script deaf to TERM still goes.
+# Default: fifteen minutes.
 unset TRIGGER_SCAFFOLD_TIMEOUT
 run_code_repo_step scaffold_repository
 assert_status 0 || exit 1
-assert_contains "-k 30s 15m bash" "$(cat "$args")" || exit 1
 assert_contains "(timeout 15m)" || exit 1
 
-# Overridden from the agent.
-export TRIGGER_SCAFFOLD_TIMEOUT="42s"
-run_code_repo_step scaffold_repository
-assert_status 0 || exit 1
-assert_contains "-k 30s 42s bash" "$(cat "$args")" || exit 1
-
-# A value `timeout` cannot parse is caught here, where the message can name the
-# variable, instead of surfacing as its exit code 125.
-export TRIGGER_SCAFFOLD_TIMEOUT="quince minutos"
-run_code_repo_step scaffold_repository
-assert_status 1 || exit 1
-assert_contains "TRIGGER_SCAFFOLD_TIMEOUT must be a number of seconds" || exit 1
-
-# Zero means opposite things to the two `timeout`s an agent image may carry --
-# no limit under GNU, stop at once under busybox -- so it is refused rather than
-# left to whichever one is installed.
-for zero in 0 0s 0m 00h; do
-  export TRIGGER_SCAFFOLD_TIMEOUT="$zero"
+# Overridden from the agent, in any of the units.
+for value in 42 42s 25m 2h 1d; do
+  export TRIGGER_SCAFFOLD_TIMEOUT="$value"
   run_code_repo_step scaffold_repository
-  assert_status 1 || exit 1
-  assert_contains "TRIGGER_SCAFFOLD_TIMEOUT must be more than zero, got '$zero'" || exit 1
+  assert_status 0 || exit 1
+  assert_contains "(timeout $value)" || exit 1
 done
 
 # A leading zero is still decimal: 08 is eight seconds, not an octal error.
 export TRIGGER_SCAFFOLD_TIMEOUT="08s"
 run_code_repo_step scaffold_repository
 assert_status 0 || exit 1
-assert_contains "-k 30s 08s bash" "$(cat "$args")" || exit 1
+
+# A value that cannot be read is caught here, where the message can name the
+# variable.
+export TRIGGER_SCAFFOLD_TIMEOUT="quince minutos"
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+assert_contains "TRIGGER_SCAFFOLD_TIMEOUT must be a number of seconds" || exit 1
+
+# Zero would stop the script before it started; whoever writes it more likely
+# means "no limit", which is what the ceiling exists to rule out.
+for zero in 0 0s 0m 00h; do
+  export TRIGGER_SCAFFOLD_TIMEOUT="$zero"
+  run_code_repo_step scaffold_repository
+  assert_status 1 || exit 1
+  assert_contains "TRIGGER_SCAFFOLD_TIMEOUT must be more than zero, got '$zero'" || exit 1
+done

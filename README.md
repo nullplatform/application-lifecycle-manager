@@ -528,21 +528,21 @@ extra_envs:
 ```
 
 A script that runs out of time is stopped and the workflow fails, with a message naming the variable
-that raises the ceiling. One that ignores `SIGTERM` gets thirty seconds more and is then killed, and
+that raises the ceiling. The stop reaches **the script and everything it started** — `git`, `gh`,
+`npm`, a background job — with `SIGTERM`, and whatever ignores it is killed thirty seconds later.
 `stdin` is closed throughout, so a stray `read` has nothing to wait for. The budget is a ceiling,
-not a target: the right answer for anything slow is still an asynchronous `after` hook.
+not a target: the right answer for anything slow is still an asynchronous `after` hook. `0` is
+refused, since it would stop the script before it could start.
 
-That message is the same under GNU coreutils and busybox `timeout`, which report a stopped script
-with different exit codes (124, 143 or 137): the step recognises a timeout by the script having run
-for the whole ceiling, not by the exit code alone. For the same reason `0` is refused — GNU reads it
-as *no limit* and busybox as *stop at once*.
+The step enforces the ceiling itself rather than through `timeout`, so it needs no coreutils and
+behaves the same on every agent image. busybox's `timeout` stops only the process it started, and
+the rest of the script kept running — holding creation for as long as it cared to take.
+
+Anything the script leaves running in the background when it exits is stopped too, with a warning:
+it would otherwise stay on the agent host and keep the hook waiting on its output.
 
 The script's stdout and stderr both become the hook's messages. They reach the console when the
 workflow ends, not while the script is still running.
-
-On an agent image without `timeout` — it is coreutils, and the smaller images do without it — the
-step says so in the hook's messages and runs the script unbounded, rather than refusing to scaffold
-at all.
 
 Unlike the step that launches it, the script runs as a **subprocess**, so it may `exit` however it
 likes and nothing it defines reaches the workflow. It inherits:
