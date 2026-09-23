@@ -1,0 +1,43 @@
+#!/bin/bash
+# Branches are tried in order and a branch with no condition matches anything,
+# so a fallback anywhere but last wins over every branch after it. That is how
+# the rule is documented; this pins it down, so a change that started skipping
+# the fallback until the end would show up here rather than in someone's names.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+md=".application.metadata.application"
+
+REPOSITORY_NAME_RULE=$(jq -nc --arg md "$md" '{branches: [
+  {naming_pattern: "fallback-{\($md).domain}"},
+  {condition: {"\($md).architecture": ".NET"}, naming_pattern: "net-{\($md).domain}"}
+]}')
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET domain=fire)
+export APPLICATION
+
+failed=0
+
+run_code_repo_step resolve_repository_name
+got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$got" != "fallback-fire" ]]; then
+  echo "  FAIL: a fallback placed first should shadow the .NET branch, got '$got'"
+  failed=1
+fi
+
+if [[ "$STEP_OUTPUT" != *"branch 0 has no condition, so it matched as the fallback"* ]]; then
+  echo "  FAIL: the shadowing fallback was not reported:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"

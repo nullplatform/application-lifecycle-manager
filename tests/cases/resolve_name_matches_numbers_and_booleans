@@ -1,0 +1,50 @@
+#!/bin/bash
+# A condition's expected value can be a number or a boolean, not just a string.
+# Numbers used to be compared through `tostring`, and jq 1.7 renders 3.0 as
+# "3.0": a rule saying 3 against a context carrying 3.0 fell through to the next
+# branch with nothing to show for it.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+REPOSITORY_NAME_RULE=$(jq -nc '{branches: [
+  {condition: {".application.metadata.application.tier": 3}, naming_pattern: "tier3-{.application.slug}"},
+  {condition: {".application.metadata.application.public": true}, naming_pattern: "public-{.application.slug}"},
+  {naming_pattern: "{.application.slug}"}
+]}')
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+# expect WANT METADATA_JSON -- the name derived for an application carrying that
+# metadata, typed as given.
+expect() {
+  local want="$1" md="$2" got
+
+  APPLICATION=$(jq -nc --argjson md "$md" \
+    '{repository_url: null, template_id: 1, slug: "checkout", metadata: {application: $md}}')
+  export APPLICATION
+
+  got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+  if [[ "$got" != "$want" ]]; then
+    echo "  FAIL: metadata $md, expected '$want', got '$got'"
+    failed=1
+  fi
+}
+
+expect tier3-checkout  '{"tier": 3}'
+expect tier3-checkout  '{"tier": 3.0}'
+# A metadata form stores its answers as strings; that has to keep matching.
+expect tier3-checkout  '{"tier": "3"}'
+expect checkout        '{"tier": 4}'
+
+expect public-checkout '{"public": true}'
+expect public-checkout '{"public": "true"}'
+expect checkout        '{"public": false}'
+
+exit "$failed"

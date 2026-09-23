@@ -1,7 +1,11 @@
 #!/bin/bash
-# When the root field itself is missing the step must blame the root field. It
-# used to fall through to the default branch and blame whatever that branch
-# asked for first, sending whoever reads the hook messages after the wrong field.
+# The value every condition in the rule is keyed on is missing, so no branch
+# matches and the walk lands on the catch-all -- whose pattern asks for that same
+# value. The step has to blame it by name.
+#
+# Worth pinning because the catch-all is the branch most likely to be written as
+# a loose fallback: if it named only fields the wizard always fills in, a missing
+# selector would quietly produce a plausible name instead of stopping.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT

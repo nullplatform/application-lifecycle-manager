@@ -1,0 +1,36 @@
+#!/bin/bash
+# Every placeholder in the branch is optional and the developer left them all
+# blank. Each one is individually allowed to vanish, so nothing fails, and the
+# slug of the leftover separators is the empty string -- which used to be
+# reported as a derived name and handed to the provider.
+#
+# The repository would then be created under whatever GitHub makes of an empty
+# name, inside a before-create hook, with the application pointing elsewhere.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+md=".application.metadata.application"
+
+REPOSITORY_NAME_RULE=$(jq -nc --arg md "$md" \
+  '{branches: [{naming_pattern: "{\($md).experience?}-{\($md).free_text_optional?}"}]}')
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET domain=fire)
+export APPLICATION
+
+run_code_repo_step resolve_repository_name
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: an empty derived name must exit 1, got $STEP_STATUS"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  exit 1
+fi
+
+assert_contains "naming pattern" || exit 1

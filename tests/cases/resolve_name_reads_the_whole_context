@@ -1,0 +1,79 @@
+#!/bin/bash
+# The paths in a rule are absolute against the hook's whole context, not against
+# the application alone, so a rule can name a repository after things the
+# application document does not carry -- the namespace it lives in, the account.
+# That is the difference between this rule format and the metadata-only one it
+# replaced.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+# The dispatcher settles the strategy before calling this step; these cases
+# exercise the step on its own, so they set it themselves.
+export CODE_REPOSITORY_STRATEGY="create"
+
+REPOSITORY_NAME_RULE=$(jq -nc \
+  '{branches: [{naming_pattern: "{.namespace.slug}-{.application.slug}-{.application.metadata.application.domain}"}]}')
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET domain=fire | jq -c '. + {slug: "checkout"}')
+export APPLICATION
+
+failed=0
+
+# scripts/base_context publishes CONTEXT for every later step; this is the path
+# a real hook takes.
+CONTEXT=$(wizard_context seguros)
+export CONTEXT
+
+got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$got" != "seguros-checkout-fire" ]]; then
+  echo "  FAIL: from CONTEXT, expected 'seguros-checkout-fire', got '$got'"
+  failed=1
+fi
+
+# A condition reads the same context, so a branch can be picked by where the
+# application lives rather than by anything the developer answered.
+REPOSITORY_NAME_RULE=$(jq -nc '{branches: [
+  {condition: {".namespace.slug": "seguros", ".account.slug": "root"}, naming_pattern: "ins-{.application.slug}"},
+  {condition: {".namespace.slug": "banca"}, naming_pattern: "bank-{.application.slug}"},
+  {naming_pattern: "{.application.slug}"}
+]}')
+export REPOSITORY_NAME_RULE
+
+expect_from_namespace() {
+  local ns="$1" want="$2" got
+
+  CONTEXT=$(wizard_context "$ns")
+  export CONTEXT
+
+  got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+  if [[ "$got" != "$want" ]]; then
+    echo "  FAIL: in namespace '$ns', expected '$want', got '$got'"
+    failed=1
+  fi
+}
+
+# .namespace and .account both hold.
+expect_from_namespace seguros ins-checkout
+# Only the .namespace one of the second branch.
+expect_from_namespace banca bank-checkout
+# Neither: the fallback.
+expect_from_namespace retail checkout
+
+# The account is part of the first branch's condition: another account in the
+# same namespace slug does not match it.
+CONTEXT=$(wizard_context seguros | jq -c '.account.slug = "other"')
+export CONTEXT
+got=$(capture_code_repo_export resolve_repository_name REPOSITORY_NAME)
+
+if [[ "$got" != "checkout" ]]; then
+  echo "  FAIL: a condition on .account.slug was ignored, got '$got'"
+  failed=1
+fi
+
+exit "$failed"

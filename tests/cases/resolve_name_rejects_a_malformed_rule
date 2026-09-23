@@ -33,27 +33,83 @@ expect_rejected() {
   fi
 }
 
-# jq -r on a missing key yields the STRING "null", so a typo in metadata_key used
-# to look up .metadata["null"], find nothing, and blame `domain` -- a field the
-# developer answered, for a rule they never wrote.
-expect_rejected "a missing metadata_key" \
-  '{"root":"architecture","branches":{".NET":["domain"]}}' "metadata_key"
+md=".application.metadata.application"
 
-expect_rejected "a missing root" \
-  '{"metadata_key":"application","branches":{".NET":["domain"]}}' "root"
+# `jsonencode(file("rules.json"))` in terraform hands over the document as a JSON
+# *string*, quotes and all, which `jq -e .` happily accepts -- so without this the
+# mistake surfaced much later as a jq error about indexing a string.
+expect_rejected "a rule that is a JSON string" \
+  '"{\"branches\":[]}"' "filebase64"
 
-expect_rejected "a branches that is not an object" \
-  '{"metadata_key":"application","root":"architecture","branches":"nope"}' "branches"
+expect_rejected "a rule with no branches" \
+  '{"naming_pattern":"{.application.slug}"}' "branches"
 
-# `.[]` over an object is valid jq -- it iterates the VALUES -- so a branch
-# written as an object asked for a metadata field the rule never named.
-expect_rejected "a branch that is not a list" \
-  '{"metadata_key":"application","root":"architecture","branches":{".NET":{"a":"domain"}}}' "branch"
+expect_rejected "a branches that is not an array" \
+  '{"branches":{".NET":["domain"]}}' "branches"
 
-# No branch for this root and no default: jq fails, its status dies inside $( ),
-# the loop never runs, and the name used to come out as the root's slug alone --
-# reported as a success, with the repository created under it.
-expect_rejected "a root with no branch and no default" \
-  '{"metadata_key":"application","root":"architecture","branches":{"Node":["domain"]}}' "architecture"
+# An empty list is not a rule, it is a rule someone is halfway through writing.
+expect_rejected "an empty branches" \
+  '{"branches":[]}' "branches"
+
+expect_rejected "a branch that is not an object" \
+  '{"branches":["{.application.slug}"]}' "branch"
+
+expect_rejected "a branch with no naming_pattern" \
+  "{\"branches\":[{\"condition\":{\"$md.architecture\":\".NET\"}}]}" "naming_pattern"
+
+expect_rejected "a condition that is not an object" \
+  "{\"branches\":[{\"condition\":\"$md.architecture\",\"naming_pattern\":\"{$md.domain}\"}]}" "condition"
+
+expect_rejected "a condition compared against a list" \
+  "{\"branches\":[{\"condition\":{\"$md.architecture\":[\".NET\"]},\"naming_pattern\":\"{$md.domain}\"}]}" "condition"
+
+# The paths are parsed, not evaluated as jq, so anything that is not a dotted
+# path has to be refused as a rule problem rather than reaching jq.
+expect_rejected "a path with no leading dot" \
+  '{"branches":[{"naming_pattern":"{application.slug}"}]}' "application.slug"
+
+expect_rejected "a path that is a jq expression" \
+  '{"branches":[{"naming_pattern":"{.application.metadata | keys}"}]}' "naming_pattern"
+
+expect_rejected "a placeholder that is never closed" \
+  "{\"branches\":[{\"naming_pattern\":\"{$md.domain\"}]}" "closed"
+
+# The branch that wins here is the first one, and it is fine. The bad
+# placeholders are in a branch this application never reaches: checked only on
+# expansion, they loaded without complaint and waited for the first application
+# that did match that branch, to fail inside its before-create hook.
+expect_rejected "a jq expression in a branch that does not win" \
+  "{\"branches\":[{\"naming_pattern\":\"{$md.domain}\"},{\"naming_pattern\":\"{.application.metadata | keys}\"}]}" \
+  "branch 1 has a placeholder"
+
+expect_rejected "an unclosed placeholder in a branch that does not win" \
+  "{\"branches\":[{\"naming_pattern\":\"{$md.domain}\"},{\"naming_pattern\":\"{$md.domain\"}]}" \
+  "branch 1 has a naming_pattern with a \"{\" that is never closed"
+
+# Every other scalar works as a condition value -- string, number, boolean -- and
+# a list or an object is refused above. null was the one that passed the shape
+# check and could then never match: `null | tostring` is "null" and an absent
+# path yields "", so the branch is dead. With a catch-all in the rule that is
+# silent, exactly like a misspelt path.
+expect_rejected "a condition compared against null" \
+  "{\"branches\":[{\"condition\":{\"$md.architecture\":null},\"naming_pattern\":\"{$md.domain}\"}]}" \
+  "can never match"
+
+# The same path shape the naming_pattern refuses. A condition used to take it:
+# `ltrimstr(".")` is a no-op without the dot and `split(".")` still produces the
+# right parts, so the rule author wrote it one way, it worked, and copying it
+# into the pattern was what finally failed.
+expect_rejected "a condition path with no leading dot" \
+  "{\"branches\":[{\"condition\":{\"application.metadata.application.architecture\":\".NET\"},\"naming_pattern\":\"{$md.domain}\"}]}" \
+  "application.metadata.application.architecture"
+
+expect_rejected "a condition path that is a jq expression" \
+  "{\"branches\":[{\"condition\":{\".application | keys\":\".NET\"},\"naming_pattern\":\"{$md.domain}\"}]}" \
+  "is not a path"
+
+# Nothing matched and no catch-all: the old code let this fall through to a name
+# built from an empty pattern, reported as a success.
+expect_rejected "no branch matching and no catch-all" \
+  "{\"branches\":[{\"condition\":{\"$md.architecture\":\"Node\"},\"naming_pattern\":\"{$md.domain}\"}]}" "no branch"
 
 exit "$failed"

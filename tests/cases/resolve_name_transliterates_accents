@@ -17,7 +17,11 @@ unset REPOSITORY_NAME
 # exercise the step on its own, so they set it themselves.
 export CODE_REPOSITORY_STRATEGY="create"
 
-REPOSITORY_NAME_RULE=$(jq -nc '{metadata_key:"application", root:"architecture", branches:{}, default:["free_name"]}')
+md=".application.metadata.application"
+
+# One catch-all branch: this case is about the slug, not about branch selection.
+REPOSITORY_NAME_RULE=$(jq -nc --arg md "$md" \
+  '{branches: [{naming_pattern: "{\($md).architecture}-{\($md).free_name}"}]}')
 export REPOSITORY_NAME_RULE
 
 failed=0
