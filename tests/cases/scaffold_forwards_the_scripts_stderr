@@ -1,0 +1,22 @@
+#!/bin/bash
+# The hook's messages are built from the workflow's stdout. Whether the engine
+# merges a step's stderr into it is not this repository's to know, and a script
+# that reports its failure on stderr -- what most tools do -- would otherwise
+# fail with nothing to show for it. So the step merges the two itself.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+cat > "$TEST_TMP/orchestrator.sh" <<'EOS'
+#!/bin/bash
+echo "cloning the service template" >&2
+exit 3
+EOS
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+# stdout only, on purpose: run_code_repo_step captures 2>&1 and would pass either way.
+stdout=$(cd "$REPO_ROOT" && source scripts/code-repo/scaffold_repository 2>/dev/null)
+
+assert_contains "cloning the service template" "$stdout" || exit 1
+assert_contains "failed with status 3" "$stdout" || exit 1

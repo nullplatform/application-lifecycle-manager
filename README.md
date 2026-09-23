@@ -485,7 +485,7 @@ extra_envs:
 |---|---|---|
 | `TRIGGER_SCAFFOLD_SCRIPT` | unset | Absolute path to the script. Unset leaves the step a no-op |
 | `TRIGGER_SCAFFOLD_INTERPRETER` | unset | What runs the script. Unset honours its shebang when it is executable, otherwise `bash` |
-| `TRIGGER_SCAFFOLD_TIMEOUT` | `15m` | How long it may take. A number of seconds, or one suffixed with `s`, `m`, `h` or `d` |
+| `TRIGGER_SCAFFOLD_TIMEOUT` | `15m` | How long it may take. A number of seconds, or one suffixed with `s`, `m`, `h` or `d`; more than zero |
 
 The file must already be on the host — baked into the agent image, mounted, or cloned beside this
 repository. Nothing fetches it. A relative path, a missing file or an unreadable one stops the
@@ -531,6 +531,14 @@ A script that runs out of time is stopped and the workflow fails, with a message
 that raises the ceiling. One that ignores `SIGTERM` gets thirty seconds more and is then killed, and
 `stdin` is closed throughout, so a stray `read` has nothing to wait for. The budget is a ceiling,
 not a target: the right answer for anything slow is still an asynchronous `after` hook.
+
+That message is the same under GNU coreutils and busybox `timeout`, which report a stopped script
+with different exit codes (124, 143 or 137): the step recognises a timeout by the script having run
+for the whole ceiling, not by the exit code alone. For the same reason `0` is refused — GNU reads it
+as *no limit* and busybox as *stop at once*.
+
+The script's stdout and stderr both become the hook's messages. They reach the console when the
+workflow ends, not while the script is still running.
 
 On an agent image without `timeout` — it is coreutils, and the smaller images do without it — the
 step says so in the hook's messages and runs the script unbounded, rather than refusing to scaffold

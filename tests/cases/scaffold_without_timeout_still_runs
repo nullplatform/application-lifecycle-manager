@@ -1,8 +1,8 @@
 #!/bin/bash
 # `timeout` is coreutils and the smaller agent images do without it. Refusing
 # there would break every scaffolding to guard against a hang that may never
-# happen, so the step degrades -- and says so, in the messages the developer is
-# already reading.
+# happen, so the step degrades -- and says so, as a WARNING in the hook's
+# messages.
 #
 # The curated PATH is the point: on CI `timeout` exists, so without it this case
 # would pass by never reaching the branch it is meant to cover.
@@ -34,7 +34,8 @@ run_code_repo_step scaffold_repository
 PATH="$FULL_PATH"
 
 assert_status 0 || exit 1
-assert_contains "no 'timeout' on the agent host" || exit 1
+# Upper case on purpose: the entrypoint classifies `Warning:` as INFO.
+assert_contains "WARNING: no 'timeout' on the agent host" || exit 1
 assert_contains "(no timeout)" || exit 1
 
 if [[ "$(cat "$seen" 2>/dev/null)" != "scaffolded" ]]; then

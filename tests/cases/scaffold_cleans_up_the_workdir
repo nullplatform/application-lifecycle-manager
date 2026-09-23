@@ -27,3 +27,43 @@ if [[ -d "$workdir" ]]; then
   echo "  FAIL: $workdir outlived the step, leftovers and all"
   exit 1
 fi
+
+# Nor when the step stops before running anything. The working directory used to
+# be created ahead of the timeout and interpreter checks, whose `exit 1` skipped
+# the cleanup: one empty directory per failed creation, and a misconfiguration
+# fails every creation.
+#
+# mktemp is stubbed to create its directory somewhere this case can watch.
+# Pointing TMPDIR there is not enough: macOS's `mktemp -d` ignores it and uses
+# the per-user Darwin temp dir, so the check would pass on a laptop by never
+# seeing the leak.
+mkdir -p "$TEST_TMP/bin" "$TEST_TMP/tmp"
+cat > "$TEST_TMP/bin/mktemp" <<EOS
+#!/bin/bash
+mkdir "$TEST_TMP/tmp/work.\$\$" && echo "$TEST_TMP/tmp/work.\$\$"
+EOS
+chmod +x "$TEST_TMP/bin/mktemp"
+export PATH="$TEST_TMP/bin:$PATH"
+
+expect_nothing_left() {
+  local what="$1"
+
+  run_code_repo_step scaffold_repository
+  assert_status 1 || exit 1
+
+  local left
+  left=$(find "$TEST_TMP/tmp" -mindepth 1 -maxdepth 1)
+
+  if [[ -n "$left" ]]; then
+    echo "  FAIL: $what left its working directory behind:"
+    printf '%s\n' "$left" | sed 's/^/        /'
+    exit 1
+  fi
+}
+
+export TRIGGER_SCAFFOLD_TIMEOUT="quince minutos"
+expect_nothing_left "a TRIGGER_SCAFFOLD_TIMEOUT that does not parse"
+
+unset TRIGGER_SCAFFOLD_TIMEOUT
+export TRIGGER_SCAFFOLD_INTERPRETER="rubby"
+expect_nothing_left "a TRIGGER_SCAFFOLD_INTERPRETER that is not on the PATH"

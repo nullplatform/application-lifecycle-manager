@@ -67,15 +67,18 @@
 # ## What the script owes back
 #
 #   exit 0     scaffolding done, the workflow continues
-#   exit 124   reserved: this is how the timeout reports a script it had to stop
+#   exit 124, 137 or 143 after the whole TRIGGER_SCAFFOLD_TIMEOUT: read as the
+#              timeout having stopped it. Earlier, just a failure like any other.
 #   exit != 0  scaffolding failed and the workflow stops. The application is not
 #              created -- but the repository already is, so a retry runs into
 #              validate_repository_does_not_exist and needs that repository gone
 #              first. Fail on what leaves the repository unusable, not on the
 #              optional extras.
 #
-# Its stdout and stderr become the hook's messages, which the developer reads
-# while the application waits in `pending_hook`.
+# Its stdout and stderr -- merged here, so neither depends on how the workflow
+# engine treats a step's stderr -- become the hook's messages. They reach the
+# developer when the workflow ends, not while the script runs: the application
+# waits in `pending_hook` with nothing to show until then.
 #
 # To write a field back to the application, use the callback body. `np application
 # update` answers 403 here: the entity is frozen until the hook closes. The helper
@@ -127,23 +130,32 @@ fi
 ALM_SCRIPTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export ALM_SCRIPTS_DIR
 
-# An empty directory to work in, removed as soon as the step ends. Whatever the
-# orchestrator clones, downloads or unpacks lands here and leaves nothing behind
-# on an agent host that is long-lived and scaffolds every application that comes
-# through. Agnostic on purpose: nothing here ever looks inside it.
-if ! SCAFFOLD_WORKDIR=$(mktemp -d); then
-  echo "ERROR: could not create a working directory for the scaffolding script."
-  exit 1
-fi
-export SCAFFOLD_WORKDIR
-
 # A `before` hook fails closed, so for as long as this runs no application can be
 # created anywhere under the NRN. The ceiling is about how long that blockade is
 # tolerable, which is a smaller number than how long a scaffolding could take.
 TRIGGER_SCAFFOLD_TIMEOUT="${TRIGGER_SCAFFOLD_TIMEOUT:-15m}"
 
-if [[ ! "$TRIGGER_SCAFFOLD_TIMEOUT" =~ ^[0-9]+[smhd]?$ ]]; then
+if [[ ! "$TRIGGER_SCAFFOLD_TIMEOUT" =~ ^([0-9]+)([smhd]?)$ ]]; then
   echo "ERROR: TRIGGER_SCAFFOLD_TIMEOUT must be a number of seconds, optionally suffixed with s, m, h or d, got '$TRIGGER_SCAFFOLD_TIMEOUT'."
+  exit 1
+fi
+
+# In seconds, because the exit status alone cannot say whether the ceiling was
+# hit (see below), and the time the script took can. 10# so a leading zero is
+# not read as octal.
+case "${BASH_REMATCH[2]}" in
+  m) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]} * 60)) ;;
+  h) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]} * 3600)) ;;
+  d) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]} * 86400)) ;;
+  *) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]})) ;;
+esac
+
+# Zero means opposite things to the two `timeout`s an agent image may carry: GNU
+# reads it as "no limit" and busybox kills the script at once. Neither is what
+# someone writing 0 is likely to want, and the first is the unbounded run this
+# variable exists to prevent -- without the warning the no-`timeout` branch gives.
+if [[ "$SCAFFOLD_TIMEOUT_SECONDS" -eq 0 ]]; then
+  echo "ERROR: TRIGGER_SCAFFOLD_TIMEOUT must be more than zero, got '$TRIGGER_SCAFFOLD_TIMEOUT'. Unset it for the default of 15m."
   exit 1
 fi
 
@@ -174,17 +186,36 @@ fi
 
 # -k gives a script that ignores TERM another 30 seconds and then kills it, so a
 # process wedged on an uninterruptible call cannot outlive the ceiling either.
+SCAFFOLD_TIMEOUT_ENFORCED=0
+
 if command -v timeout >/dev/null 2>&1; then
   SCAFFOLD_RUNNER=(timeout -k 30s "$TRIGGER_SCAFFOLD_TIMEOUT" "${SCAFFOLD_RUNNER[@]}")
+  SCAFFOLD_TIMEOUT_ENFORCED=1
   echo "Running scaffolding script: $TRIGGER_SCAFFOLD_SCRIPT (timeout $TRIGGER_SCAFFOLD_TIMEOUT)"
 else
   # Degrade rather than refuse. `timeout` is coreutils and absent from the
   # smaller agent images, and refusing there would break every scaffolding to
   # protect against a hang that may never happen -- but an unbounded run is worth
-  # saying out loud, in the messages the developer is already reading.
-  echo "Warning: no 'timeout' on the agent host, so TRIGGER_SCAFFOLD_TIMEOUT cannot be enforced and a script that hangs will block application creation for this NRN."
+  # saying out loud in the hook's messages. Upper case, because the entrypoint
+  # only classifies `warning`, `WARNING` and `warn` as a warning, and `Warning:`
+  # would reach the developer as plain INFO.
+  echo "WARNING: no 'timeout' on the agent host, so TRIGGER_SCAFFOLD_TIMEOUT cannot be enforced and a script that hangs will block application creation for this NRN."
   echo "Running scaffolding script: $TRIGGER_SCAFFOLD_SCRIPT (no timeout)"
 fi
+
+# An empty directory to work in, removed as soon as the step ends. Whatever the
+# orchestrator clones, downloads or unpacks lands here and leaves nothing behind
+# on an agent host that is long-lived and scaffolds every application that comes
+# through. Agnostic on purpose: nothing here ever looks inside it.
+#
+# Created last, after every check that can `exit 1`: an exit between this and the
+# `rm -rf` below would leave one directory behind per failed creation, and a
+# misconfiguration fails every creation.
+if ! SCAFFOLD_WORKDIR=$(mktemp -d); then
+  echo "ERROR: could not create a working directory for the scaffolding script."
+  exit 1
+fi
+export SCAFFOLD_WORKDIR
 
 # A subprocess inside a subshell, and both halves earn their keep. The subprocess
 # keeps an `exit 0` of the orchestrator's -- the most ordinary last line a script
@@ -197,15 +228,28 @@ fi
 # waiting is the one failure mode `timeout` turns into a fifteen minute outage
 # instead of an error.
 SCAFFOLD_STATUS=0
-( cd "$SCAFFOLD_WORKDIR" && "${SCAFFOLD_RUNNER[@]}" </dev/null ) || SCAFFOLD_STATUS=$?
+SCAFFOLD_STARTED=$SECONDS
+( cd "$SCAFFOLD_WORKDIR" && "${SCAFFOLD_RUNNER[@]}" </dev/null 2>&1 ) || SCAFFOLD_STATUS=$?
+SCAFFOLD_ELAPSED=$((SECONDS - SCAFFOLD_STARTED))
 
 rm -rf "$SCAFFOLD_WORKDIR"
 unset SCAFFOLD_WORKDIR SCAFFOLD_RUNNER
 
-# 124 is how `timeout` reports that it had to stop the command. A script that
-# exits 124 of its own accord is indistinguishable and would be read as a
-# timeout, which is a better mistake than the reverse.
-if [[ "$SCAFFOLD_STATUS" -eq 124 ]]; then
+# The exit status alone does not say the ceiling was hit. 124 is GNU `timeout`'s
+# convention, and only for a script that went on TERM: one that ignored it and
+# was killed by -k exits 137, and busybox `timeout` -- the one a busybox agent
+# image carries -- never exits 124 at all, 143 on TERM and 137 on KILL. Read
+# alone, those would reach the operator as a bare "failed with status 137",
+# which looks like an out-of-memory kill, instead of naming the variable to raise.
+#
+# So a stopped script is one that exited with any of the three AND ran for at
+# least the ceiling. $SECONDS is whole seconds, but a run that lasted the ceiling
+# always spans at least that many second boundaries, so this cannot miss one; a
+# script that exits 124 or 143 of its own accord, early, is reported as the
+# failure it is.
+if [[ "$SCAFFOLD_TIMEOUT_ENFORCED" -eq 1 ]] \
+  && [[ "$SCAFFOLD_STATUS" -eq 124 || "$SCAFFOLD_STATUS" -eq 137 || "$SCAFFOLD_STATUS" -eq 143 ]] \
+  && [[ "$SCAFFOLD_ELAPSED" -ge "$SCAFFOLD_TIMEOUT_SECONDS" ]]; then
   echo "ERROR: the scaffolding script '$TRIGGER_SCAFFOLD_SCRIPT' did not finish within $TRIGGER_SCAFFOLD_TIMEOUT and was stopped."
   echo "Raise TRIGGER_SCAFFOLD_TIMEOUT on the agent if the work legitimately takes longer, or move it out of this hook."
   echo "The repository exists but is not fully scaffolded; it has to be removed before this application can be created again."

@@ -3,17 +3,26 @@
 # and it fails closed, so nobody can create an application anywhere under the NRN
 # until it returns. The message says which variable raises the ceiling, because
 # the operator reading it is deciding exactly that.
+#
+# And it has to say so whichever `timeout` the agent image carries. They report a
+# stopped script differently: GNU exits 124 on TERM, busybox 143, and both 137
+# when -k had to KILL a script that ignored TERM. This case used to fake only 124,
+# so it passed while a busybox agent -- or any TERM-deaf script -- got a bare
+# "failed with status 137", which reads as an out-of-memory kill.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
 
 mkdir -p "$TEST_TMP/bin"
 
-# 124 is what `timeout` returns when it had to stop the command. Faked rather
-# than waited for: this asserts how the step reports it, not that coreutils works.
+# Faked rather than waited for: this asserts how the step reports a stop, not
+# that coreutils works. It does take its time, though -- a stop is recognised by
+# the script having run for the whole ceiling, so a stub that returned at once
+# would be read, correctly, as a script that failed on its own.
 cat > "$TEST_TMP/bin/timeout" <<'EOS'
 #!/bin/bash
-exit 124
+sleep "${FAKE_TIMEOUT_SLEEP:-0}"
+exit "$FAKE_TIMEOUT_STATUS"
 EOS
 chmod +x "$TEST_TMP/bin/timeout"
 
@@ -21,10 +30,41 @@ printf '#!/bin/bash\nsleep 600\n' > "$TEST_TMP/orchestrator.sh"
 
 export PATH="$TEST_TMP/bin:$PATH"
 export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
-export TRIGGER_SCAFFOLD_TIMEOUT="5s"
 
-run_code_repo_step scaffold_repository
-assert_status 1 || exit 1
-assert_contains "did not finish within 5s and was stopped" || exit 1
-assert_contains "Raise TRIGGER_SCAFFOLD_TIMEOUT" || exit 1
-assert_contains "has to be removed" || exit 1
+failed=0
+
+# GNU on TERM, busybox on TERM, either one after -k.
+export TRIGGER_SCAFFOLD_TIMEOUT="1s" FAKE_TIMEOUT_SLEEP=1
+
+for status in 124 143 137; do
+  export FAKE_TIMEOUT_STATUS="$status"
+  run_code_repo_step scaffold_repository
+
+  if ! { assert_status 1 \
+    && assert_contains "did not finish within 1s and was stopped" \
+    && assert_contains "Raise TRIGGER_SCAFFOLD_TIMEOUT" \
+    && assert_contains "has to be removed"; }; then
+    echo "  (timeout exiting $status)"
+    failed=1
+  fi
+done
+
+# The same codes from a script that stopped on its own, well inside the ceiling:
+# a crash is not a timeout, and telling the operator to raise the ceiling would
+# send them the wrong way.
+export TRIGGER_SCAFFOLD_TIMEOUT="30s" FAKE_TIMEOUT_SLEEP=0
+
+for status in 124 143 137; do
+  export FAKE_TIMEOUT_STATUS="$status"
+  run_code_repo_step scaffold_repository
+
+  if [[ "$STEP_OUTPUT" == *"did not finish within"* ]]; then
+    echo "  FAIL: an early exit $status was reported as a timeout:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  elif ! { assert_status 1 && assert_contains "failed with status $status"; }; then
+    failed=1
+  fi
+done
+
+exit "$failed"
