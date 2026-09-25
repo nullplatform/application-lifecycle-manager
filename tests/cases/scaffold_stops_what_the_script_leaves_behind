@@ -1,0 +1,49 @@
+#!/bin/bash
+# A script can exit and leave something running in the background. On a
+# long-lived agent host that is a leak, and worse: it still holds the step's
+# stdout, which the entrypoint captures, so the hook waits on it -- and with the
+# script gone there is no ceiling left to stop it. The step stops what is left
+# and says so, and a scaffolding that otherwise succeeded still succeeds.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# A `sleep` duration nobody else uses, so the process table can be asked directly.
+cat > "$TEST_TMP/orchestrator.sh" <<'EOS'
+#!/bin/bash
+sleep 44 &
+echo "scaffolded"
+exit 0
+EOS
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+started=$SECONDS
+run_code_repo_step scaffold_repository
+took=$((SECONDS - started))
+
+assert_status 0 || exit 1
+assert_contains "scaffolded" || exit 1
+assert_contains "WARNING: the scaffolding script left processes running" || exit 1
+
+if [[ "$took" -gt 8 ]]; then
+  echo "  FAIL: the step waited ${took}s on what the script left behind"
+  exit 1
+fi
+
+sleep 1
+if pgrep -f "^sleep 44$" >/dev/null; then
+  echo "  FAIL: a process the script left behind outlived the step"
+  pkill -KILL -f "^sleep 44$"
+  exit 1
+fi
+
+# And a script that leaves nothing behind gets no warning.
+printf '#!/bin/bash\necho clean\n' > "$TEST_TMP/orchestrator.sh"
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+
+if [[ "$STEP_OUTPUT" == *"left processes running"* ]]; then
+  echo "  FAIL: a script that left nothing behind was warned about it"
+  exit 1
+fi

@@ -1,0 +1,44 @@
+#!/bin/bash
+# The ceiling belongs to the operator: an installation whose scaffolding takes
+# longer raises it from the agent's extra_envs, without touching this repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+printf '#!/bin/bash\n' > "$TEST_TMP/orchestrator.sh"
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+# Default: fifteen minutes.
+unset TRIGGER_SCAFFOLD_TIMEOUT
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+assert_contains "(timeout 15m)" || exit 1
+
+# Overridden from the agent, in any of the units.
+for value in 42 42s 25m 2h 1d; do
+  export TRIGGER_SCAFFOLD_TIMEOUT="$value"
+  run_code_repo_step scaffold_repository
+  assert_status 0 || exit 1
+  assert_contains "(timeout $value)" || exit 1
+done
+
+# A leading zero is still decimal: 08 is eight seconds, not an octal error.
+export TRIGGER_SCAFFOLD_TIMEOUT="08s"
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+
+# A value that cannot be read is caught here, where the message can name the
+# variable.
+export TRIGGER_SCAFFOLD_TIMEOUT="quince minutos"
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+assert_contains "TRIGGER_SCAFFOLD_TIMEOUT must be a number of seconds" || exit 1
+
+# Zero would stop the script before it started; whoever writes it more likely
+# means "no limit", which is what the ceiling exists to rule out.
+for zero in 0 0s 0m 00h; do
+  export TRIGGER_SCAFFOLD_TIMEOUT="$zero"
+  run_code_repo_step scaffold_repository
+  assert_status 1 || exit 1
+  assert_contains "TRIGGER_SCAFFOLD_TIMEOUT must be more than zero, got '$zero'" || exit 1
+done

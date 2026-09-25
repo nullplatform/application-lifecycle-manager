@@ -1,0 +1,46 @@
+#!/bin/bash
+# The whole point of TRIGGER_SCAFFOLD_SCRIPT: the step hands the repository to a
+# script this repository has never seen, with the context it needs already in the
+# environment.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+seen="$TEST_TMP/seen"
+
+cat > "$TEST_TMP/orchestrator.sh" <<EOS
+#!/bin/bash
+{
+  echo "repository=\$REPOSITORY_NAME"
+  echo "application=\$APPLICATION_ID"
+  echo "provider=\$CODE_REPOSITORY_PROVIDER"
+  echo "scripts_dir=\$ALM_SCRIPTS_DIR"
+  echo "cwd=\$(pwd)"
+  echo "entries=\$(ls -A . | wc -l | tr -d ' ')"
+} > "$seen"
+EOS
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+export CODE_REPOSITORY_PROVIDER="github"
+
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+assert_contains "Running scaffolding script" || exit 1
+
+observed=$(cat "$seen")
+
+assert_contains "repository=my-service" "$observed" || exit 1
+assert_contains "application=42" "$observed" || exit 1
+assert_contains "provider=github" "$observed" || exit 1
+
+# ALM_SCRIPTS_DIR has to be absolute: the orchestrator runs from a working
+# directory of its own, so a path relative to this repository would not resolve.
+assert_contains "scripts_dir=$REPO_ROOT/scripts" "$observed" || exit 1
+
+# And it starts in an empty directory, not in this repository.
+assert_contains "entries=0" "$observed" || exit 1
+
+if grep -q "cwd=$REPO_ROOT$" "$seen"; then
+  echo "  FAIL: the scaffolding script ran inside this repository instead of its own workdir"
+  exit 1
+fi

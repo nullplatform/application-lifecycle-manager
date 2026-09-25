@@ -146,27 +146,30 @@ The code repository workflow is composed of the following tasks:
 - **Trigger initial CI build**  
   Optionally kicks off a first CI build so you can deploy your application immediately after creation.
 
-#### A default template for applications that carry none
+#### One template for the whole installation
 
 The dispatcher chooses between its `create` and `import` strategies by whether the application has
-a `template_id`. An installation that removes the template chooser from its console produces
-applications with none, which reads as "importing a repository that already exists" — the opposite
-of what is happening — and the run dies at `validate_repository_does_not_exist` on a repository
-nobody ever created.
+a `template_id`. An installation that removes the template chooser from its console has no way to
+say which template it wants, and depending on the console it gets either no template at all — which
+reads as "importing a repository that already exists", the opposite of what is happening, and dies
+at `validate_repository_does_not_exist` on a repository nobody ever created — or the platform's
+global default, which is nobody's choice either.
 
-`CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` fills that gap. Set it on the agent and an application
-without a template is created from that one instead:
+`CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` settles both. Set it on the agent and it is the template every
+application is created from:
 
 ```yaml
 extra_envs:
   CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: "1855672260"
 ```
 
-An application that carries its own `template_id` is never overridden. Unset, nothing changes.
+**It overrides whatever the application carries**, including a `template_id` the console filled in
+by itself. Unset, nothing changes and the application's own template is used, so an installation
+that shows the chooser is unaffected.
 
 > **Setting this removes the import path for the whole installation.** The absence of a
 > `template_id` was the only signal the dispatcher had for "this application is importing an
-> existing repository", and the default gives that same absence a second meaning. The variable is
+> existing repository", and this variable overrides that signal. It is
 > agent-level, not per-application, so once it is set **every** application resolves to `create`,
 > and one that points at a repository that already exists now fails at
 > `validate_repository_does_not_exist` with *"Repository already exists but strategy is set to
@@ -463,9 +466,136 @@ workflow for any provider that was missing it.
 Both are **sourced** into the workflow's shared shell, so the usual rule applies: `return` to
 continue, `exit 1` to stop the workflow, and never `exit 0` — that ends the shared shell and
 silently skips every step that follows. Their stdout becomes the hook's messages, which is what the
-developer sees in the console.
+developer sees in the console. A scaffolding script reached through `TRIGGER_SCAFFOLD_SCRIPT` is the
+exception: it runs as a subprocess and `exit 0` there is ordinary and safe.
 
 Each file documents the variables it can read; the headers are the reference.
+
+### Scaffolding from your own script
+
+`scaffold_repository` does not have to be edited. Point `TRIGGER_SCAFFOLD_SCRIPT` at an absolute
+path on the agent host and the step runs it:
+
+```yaml
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold/orchestrator.sh
+```
+
+| Variable | Default | Effect |
+|---|---|---|
+| `TRIGGER_SCAFFOLD_SCRIPT` | unset | Absolute path to the script. Unset leaves the step a no-op |
+| `TRIGGER_SCAFFOLD_INTERPRETER` | unset | What runs the script. Unset honours its shebang when it is executable, otherwise `bash` |
+| `TRIGGER_SCAFFOLD_TIMEOUT` | `15m` | How long it may take. A number of seconds, or one suffixed with `s`, `m`, `h` or `d`; more than zero |
+
+The file must already be on the host — baked into the agent image, mounted, or cloned beside this
+repository. Nothing fetches it. A relative path, a missing file or an unreadable one stops the
+workflow with a message naming which of the three it was.
+
+#### In any language
+
+The script does not have to be bash. Three ways in, in the order they are asked for:
+
+```yaml
+# 1. An interpreter named outright — anything on the agent's PATH.
+#    Word-split, so a command line works, not only a binary.
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold/orchestrator.py
+  TRIGGER_SCAFFOLD_INTERPRETER: python3
+
+# 2. Under mise, for a toolchain the agent image does not carry:
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold/orchestrator.sh
+  TRIGGER_SCAFFOLD_INTERPRETER: mise exec --
+
+# 3. Nothing named: an executable script runs on its own shebang
+#    (`#!/usr/bin/env python3`, `#!/bin/bash`, …), a non-executable one on bash.
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold/orchestrator.py   # chmod +x
+```
+
+An interpreter that is not on the agent's PATH stops the workflow naming the variable, rather than
+surfacing later as a bare exit code 127.
+
+#### Timeout
+
+This is a `before` hook and it fails closed: while the script runs, **no application can be created
+anywhere under the NRN**. `TRIGGER_SCAFFOLD_TIMEOUT` is the ceiling on that blockade — fifteen
+minutes by default, raised or lowered from the agent's `extra_envs`:
+
+```yaml
+extra_envs:
+  TRIGGER_SCAFFOLD_TIMEOUT: 25m
+```
+
+A script that runs out of time is stopped and the workflow fails, with a message naming the variable
+that raises the ceiling. The stop reaches **the script and everything it started** — `git`, `gh`,
+`npm`, a background job — with `SIGTERM`, and whatever ignores it is killed thirty seconds later.
+`stdin` is closed throughout, so a stray `read` has nothing to wait for. The budget is a ceiling,
+not a target: the right answer for anything slow is still an asynchronous `after` hook. `0` is
+refused, since it would stop the script before it could start.
+
+The step enforces the ceiling itself rather than through `timeout`, so it needs no coreutils and
+behaves the same on every agent image. busybox's `timeout` stops only the process it started, and
+the rest of the script kept running — holding creation for as long as it cared to take.
+
+Anything the script leaves running in the background when it exits is stopped too, with a warning:
+it would otherwise stay on the agent host and keep the hook waiting on its output.
+
+The script's stdout and stderr both become the hook's messages. They reach the console when the
+workflow ends, not while the script is still running.
+
+Unlike the step that launches it, the script runs as a **subprocess**, so it may `exit` however it
+likes and nothing it defines reaches the workflow. It inherits:
+
+| Variable | Contents |
+|---|---|
+| `APPLICATION` | The full application document, metadata included |
+| `APPLICATION_ID`, `APPLICATION_SLUG`, `NAMESPACE_SLUG`, `NRN`, `ACCOUNT_ID` | The entity being created |
+| `REPOSITORY_NAME` | The repository that was just created |
+| `CODE_REPOSITORY_PROVIDER` | `github`, `gitlab` or `bitbucket` |
+| `CODE_REPOSITORY_STRATEGY` | `create` or `import` |
+| `CODE_REPOSITORY` | The provider configuration, including `.attributes` |
+| `TEMPLATE_URL` | The template, when the strategy is `create` |
+| `SCAFFOLD_WORKDIR` | An empty directory, its working directory, removed when the step ends |
+| `ALM_SCRIPTS_DIR` | This repository's `scripts/`, to reach `callback_body` |
+
+Provider credentials come from that provider's `build_context` and are provider-shaped by nature:
+on GitHub, `GH_TOKEN` and `GITHUB_ACCOUNT`, with `gh` already authenticated. `REPOSITORY_URL` is
+the application's own field and is **not** the repository just created — it is still empty when the
+name came from metadata.
+
+**This repository reads nothing out of `APPLICATION` on your behalf.** Which field decides what gets
+scaffolded is the script's business: one installation can branch on an architecture attribute,
+another on a field this repository has never heard of, and neither needs a change here. Branching by
+technology is one shape of that, not the contract:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+FLAVOUR=$(jq -r '.metadata.wizard.architecture // empty' <<<"$APPLICATION")
+
+case "$FLAVOUR" in
+  .NET)   "$(dirname "$0")/dotnet.sh"  ;;
+  Node)   "$(dirname "$0")/node.sh"    ;;
+  *)      echo "No scaffolding defined for '$FLAVOUR', leaving the repository as it is" ;;
+esac
+```
+
+`$(dirname "$0")` is how sibling scripts resolve: `$0` is the absolute path from
+`TRIGGER_SCAFFOLD_SCRIPT`, so it holds from any working directory.
+
+A non-zero exit stops the workflow, and the application is not created — but the repository already
+is, so a retry runs into `validate_repository_does_not_exist` and needs that repository removed
+first. Fail on what leaves the repository unusable, not on the optional extras.
+
+To write a field back to the application, use the callback body; `np application update` answers 403
+while the entity is held in `pending_hook`:
+
+```bash
+source "$ALM_SCRIPTS_DIR/callback_body"
+alm_callback_body_set repository_app_path "services/$REPOSITORY_NAME"
+```
 
 ### Refusing an operation
 

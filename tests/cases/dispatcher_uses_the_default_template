@@ -7,9 +7,15 @@
 # which is the opposite of what is happening, and the run dies at
 # validate_repository_does_not_exist on a repository nobody ever created.
 #
-# CODE_REPOSITORY_DEFAULT_TEMPLATE_ID fills that gap: no template on the
-# application means use this one, which makes the strategy `create` and lets the
-# name be derived.
+# CODE_REPOSITORY_DEFAULT_TEMPLATE_ID settles it: set, it is the template every
+# application gets, which makes the strategy `create` and lets the name be
+# derived.
+#
+# It OVERRIDES whatever the application carries. A console with the chooser
+# removed still sends a template_id -- the platform's global default -- so a
+# variable that only filled an empty field could never be reached from that
+# console, which is the one installation it exists for. Unset, the application's
+# own template is used, so an installation that shows the chooser is unaffected.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
@@ -64,19 +70,28 @@ name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
 [[ "$strategy" == "import" ]] || { echo "  FAIL: with no default, expected 'import', got '$strategy'"; failed=1; }
 [[ "$name" == "test-whatever" ]] || { echo "  FAIL: with no default, expected the URL's name, got '$name'"; failed=1; }
 
-# An application that DOES carry a template keeps it; the default never overrides.
+# An application that DOES carry a template: the variable wins. This is the whole
+# point -- the console that hides the chooser still sends one.
 export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="1855672260"
 APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
   | jq -c '.template_id = 777 | .repository_url = "https://github.com/acme/test-whatever"')
 export APPLICATION
 
 # BB_CALLS accumulates across the scenarios above, so without this the grep would
-# pass on any run that happened to mention 777 -- it proves the id appears
-# somewhere, not that THIS run used it instead of the default.
+# pass on any run that happened to mention the id -- it proves the id appears
+# somewhere, not that THIS run used it.
 : > "$BB_CALLS"
 
 run_code_repo_step create_code_repository
-grep -q 'template read --id 777' "$BB_CALLS" || { echo "  FAIL: the default overrode the application's own template"; failed=1; }
-grep -q 'template read --id 1855672260' "$BB_CALLS" && { echo "  FAIL: the default was read even though the application carries its own template"; failed=1; }
+grep -q 'template read --id 1855672260' "$BB_CALLS" || { echo "  FAIL: the variable did not override the application's own template"; failed=1; }
+grep -q 'template read --id 777' "$BB_CALLS" && { echo "  FAIL: the application's template was read even though the variable is set"; failed=1; }
+
+# And unset, the application's own template is what gets used -- an installation
+# that shows the chooser keeps working exactly as before.
+unset CODE_REPOSITORY_DEFAULT_TEMPLATE_ID
+: > "$BB_CALLS"
+
+run_code_repo_step create_code_repository
+grep -q 'template read --id 777' "$BB_CALLS" || { echo "  FAIL: without the variable, the application's own template was not used"; failed=1; }
 
 exit "$failed"

@@ -59,9 +59,8 @@ fi
 # exist.
 #
 # The dispatcher has already settled this, so ask it rather than working it out
-# again from the application: it also applies the default template, and an
-# installation that removed the template chooser from its console produces
-# applications with no template at all.
+# again from the application: CODE_REPOSITORY_DEFAULT_TEMPLATE_ID is applied
+# there, and it overrides whatever template the application arrived with.
 #
 # And not by the presence of a repository_url: the console fills that in before
 # the hook runs, defaulting to <namespace-slug>-<application-slug>, so every

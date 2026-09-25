@@ -1,0 +1,100 @@
+#!/bin/bash
+# A hanging scaffolding is the worst failure this hook has: it is a `before` hook
+# and it fails closed, so nobody can create an application anywhere under the NRN
+# until it returns. The message says which variable raises the ceiling, because
+# the operator reading it is deciding exactly that.
+#
+# Real processes and a real clock, not a faked `timeout`: what broke was the
+# process tree. busybox `timeout` stopped only the process it started, so the
+# rest of a script -- the second line of it, whatever it had spawned -- ran on
+# holding the captured stdout, and a 2s ceiling held the hook for as long as the
+# script cared to take. The faked `timeout` this case used to have could never
+# have seen that.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export TRIGGER_SCAFFOLD_TIMEOUT="1s"
+# The TERM-to-KILL grace, shortened so the TERM-deaf case costs a second, not 30.
+export SCAFFOLD_KILL_GRACE=1
+
+failed=0
+
+# expect_stopped LABEL MARKER BODY -- a script with BODY is stopped at the
+# ceiling, with the timeout message, and nothing it started outlives the step.
+#
+# MARKER is a `sleep` duration used by nobody else, so what is still running
+# can be asked of the process table directly instead of waited out: a race
+# against a `touch` in the script depended on the runner being quick enough.
+expect_stopped() {
+  local what="$1" marker="$2" body="$3" started took
+
+  printf '#!/bin/bash\n%s\n' "$body" > "$TEST_TMP/orchestrator.sh"
+  export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+  started=$SECONDS
+  run_code_repo_step scaffold_repository
+  took=$((SECONDS - started))
+
+  # 1s ceiling + 1s grace, and slack for a loaded CI runner. A tree that survived
+  # would hold the capture open for its full sleep.
+  if [[ "$took" -gt 8 ]]; then
+    echo "  FAIL: $what held the step for ${took}s against a 1s ceiling"
+    failed=1
+  fi
+
+  if ! { assert_status 1 \
+    && assert_contains "did not finish within 1s and was stopped" \
+    && assert_contains "Raise TRIGGER_SCAFFOLD_TIMEOUT" \
+    && assert_contains "has to be removed"; }; then
+    echo "  ($what)"
+    failed=1
+  fi
+
+  # A moment for the kernel to finish reaping what was killed.
+  sleep 1
+  if pgrep -f "^sleep $marker\$" >/dev/null; then
+    echo "  FAIL: $what left a process running after the step returned"
+    pkill -KILL -f "^sleep $marker\$"
+    failed=1
+  fi
+}
+
+# More than one line, so bash forks the sleep instead of exec'ing it: the case
+# busybox got wrong.
+expect_stopped "a script that hangs" 41 \
+  "echo starting
+sleep 41"
+
+# Deaf to TERM, and so is what it started -- an ignored signal is inherited --
+# so only the KILL after the grace stops them, and it has to reach the child as
+# well as the script.
+expect_stopped "a script that ignores TERM" 42 \
+  "trap '' TERM
+sleep 42 &
+sleep 42"
+
+# What an ordinary tool does: work in a child, the script waiting on it.
+expect_stopped "a script waiting on a child" 43 \
+  "sleep 43 &
+wait"
+
+# The codes a stopped script tends to exit with, from one that stopped on its
+# own well inside the ceiling: a crash is not a timeout, and telling the operator
+# to raise the ceiling would send them the wrong way.
+export TRIGGER_SCAFFOLD_TIMEOUT="30s"
+
+for status in 124 137 143; do
+  printf '#!/bin/bash\nexit %s\n' "$status" > "$TEST_TMP/orchestrator.sh"
+  run_code_repo_step scaffold_repository
+
+  if [[ "$STEP_OUTPUT" == *"did not finish within"* ]]; then
+    echo "  FAIL: an early exit $status was reported as a timeout:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  elif ! { assert_status 1 && assert_contains "failed with status $status"; }; then
+    failed=1
+  fi
+done
+
+exit "$failed"

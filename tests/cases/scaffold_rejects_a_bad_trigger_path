@@ -1,0 +1,33 @@
+#!/bin/bash
+# The variable is set once on the agent and serves every application it scaffolds,
+# so a bad value is worth naming precisely: the operator who fixes it is not the
+# developer who hit it.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+# Relative. It would otherwise resolve against this repository's directory and
+# mean a file nobody intended -- or, worse, one that happens to exist.
+export TRIGGER_SCAFFOLD_SCRIPT="scripts/code-repo/generate_secrets"
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+assert_contains "must be an absolute path" || exit 1
+
+# Absolute but absent.
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/not-there.sh"
+run_code_repo_step scaffold_repository
+assert_status 1 || exit 1
+assert_contains "not a file on the agent host" || exit 1
+
+# There but unreadable. Skipped as root, which can read it anyway.
+if [[ "$(id -u)" != "0" ]]; then
+  printf '#!/bin/bash\n' > "$TEST_TMP/locked.sh"
+  chmod 000 "$TEST_TMP/locked.sh"
+
+  export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/locked.sh"
+  run_code_repo_step scaffold_repository
+  assert_status 1 || exit 1
+  assert_contains "cannot read it" || exit 1
+
+  chmod 644 "$TEST_TMP/locked.sh"
+fi

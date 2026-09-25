@@ -1,0 +1,34 @@
+#!/bin/bash
+# With no interpreter named, an executable script runs as itself, so its shebang
+# decides -- python, ruby, anything. Running `bash <file>` unconditionally would
+# read that shebang as a comment and feed the rest to the wrong language.
+#
+# `cat` is the interpreter here because it has to be a real binary: a shebang
+# pointing at another script is not recursive on either Linux or macOS, the exec
+# fails with ENOEXEC, and bash then runs the file itself -- which is exactly the
+# behaviour this case exists to rule out, so it would pass for the wrong reason.
+#
+# Under `cat` the body is echoed and the step succeeds. Under bash it is a command
+# that does not exist, and the step fails: the two outcomes cannot be confused.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+printf '#!%s\nSHEBANG-HONOURED\n' "$(command -v cat)" > "$TEST_TMP/orchestrator.lang"
+chmod +x "$TEST_TMP/orchestrator.lang"
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.lang"
+
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+assert_contains "SHEBANG-HONOURED" || exit 1
+
+# And an interpreter named explicitly still wins over the shebang.
+export TRIGGER_SCAFFOLD_INTERPRETER="head -1"
+run_code_repo_step scaffold_repository
+assert_status 0 || exit 1
+
+if [[ "$STEP_OUTPUT" == *"SHEBANG-HONOURED"* ]]; then
+  echo "  FAIL: TRIGGER_SCAFFOLD_INTERPRETER was ignored in favour of the shebang"
+  exit 1
+fi

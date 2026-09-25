@@ -1,0 +1,46 @@
+#!/bin/bash
+# The reason the orchestrator is a subprocess and not a `source`.
+#
+# `exit 0` is the most ordinary last line a standalone script can have, and this
+# file is sourced into the workflow's shared shell -- sourcing an orchestrator
+# that ends that way would end the shell too and silently skip create_secrets and
+# run_first_build, with the hook still reporting success.
+#
+# Its `cd` must not escape either: every later step is loaded by a path relative
+# to this repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+cat > "$TEST_TMP/orchestrator.sh" <<'EOS'
+#!/bin/bash
+cd /tmp || exit 1
+echo "scaffolding"
+exit 0
+EOS
+
+export TRIGGER_SCAFFOLD_SCRIPT="$TEST_TMP/orchestrator.sh"
+
+survived=$(
+  cd "$REPO_ROOT" || exit 1
+  # shellcheck disable=SC1091
+  source scripts/code-repo/scaffold_repository >/dev/null 2>&1
+
+  # SC2317 reads the step's `return 0` as ending this subshell and calls the line
+  # below unreachable. It is not -- `return` in a sourced file returns from the
+  # source -- and whether it runs is the whole assertion.
+  # shellcheck disable=SC2317
+  echo "alive:$(pwd)"
+)
+
+if [[ "$survived" != alive:* ]]; then
+  echo "  FAIL: the orchestrator's 'exit 0' ended the workflow's shared shell"
+  echo "        every step after scaffold_repository would be skipped in silence"
+  exit 1
+fi
+
+if [[ "$survived" != "alive:$REPO_ROOT" ]]; then
+  echo "  FAIL: the orchestrator's 'cd' escaped into the shared shell: ${survived#alive:}"
+  echo "        the steps after this one resolve their paths against $REPO_ROOT"
+  exit 1
+fi

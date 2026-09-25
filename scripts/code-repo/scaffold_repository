@@ -1,46 +1,313 @@
 #!/bin/bash
 #
-# EXTENSION POINT -- ships doing nothing. Replace the body with your own setup.
+# EXTENSION POINT -- hands the repository to a scaffolding script of your own.
 #
 # Runs after the repository exists and the template has been expanded, and before
 # the first build. This is where the things a template cannot express by itself
 # go: substitutions that depend on the application's metadata, CODEOWNERS,
 # environments, rulesets, custom properties, topics.
 #
-# Available:
-#   $REPOSITORY_NAME   $CODE_REPOSITORY_STRATEGY   (create | import)
+# Ships doing nothing: without TRIGGER_SCAFFOLD_SCRIPT this step is a no-op and
+# the repository stays exactly as the template left it.
+#
+#
+# ## Plugging one in
+#
+# Set TRIGGER_SCAFFOLD_SCRIPT on the agent (extra_envs) to the ABSOLUTE path of
+# your script on the agent host:
+#
+#   TRIGGER_SCAFFOLD_SCRIPT=/opt/scaffold/orchestrator.sh
+#   TRIGGER_SCAFFOLD_INTERPRETER=python3      # optional, see below
+#   TRIGGER_SCAFFOLD_TIMEOUT=15m              # optional, this is the default
+#
+# The file has to be there already -- baked into the agent image, mounted, or
+# cloned beside this repository. Nothing here fetches it.
+#
+#
+# ## What the script receives
+#
+# It runs as a SUBPROCESS, not sourced, and inherits the environment:
+#
 #   $APPLICATION       the full application document, metadata included
-#   $NRN   $APPLICATION_ID   $NAMESPACE_SLUG
+#   $APPLICATION_ID    $APPLICATION_SLUG   $NAMESPACE_SLUG   $NRN   $ACCOUNT_ID
+#   $REPOSITORY_NAME   the repository that was just created
+#   $CODE_REPOSITORY_PROVIDER    github | gitlab | bitbucket
+#   $CODE_REPOSITORY_STRATEGY    create | import
 #   $CODE_REPOSITORY   the provider configuration, including .attributes
 #   $TEMPLATE_URL      when the strategy is `create`
+#   $SCAFFOLD_WORKDIR  an empty directory, its working directory, removed after
+#   $ALM_SCRIPTS_DIR   this repository's scripts/, to reach the helpers below
+#
+# It does not have to be bash. TRIGGER_SCAFFOLD_INTERPRETER names what runs it --
+# `python3`, `mise exec --`, anything on the agent's PATH -- and with the variable
+# unset an executable script runs on its own shebang, a non-executable one on
+# bash.
+#
+# It gets TRIGGER_SCAFFOLD_TIMEOUT to finish in, 15 minutes by default, with
+# stdin closed. This is a `before` hook and it fails closed: while it runs, no
+# application can be created anywhere under the NRN. At the ceiling the script
+# and everything it started get TERM, and KILL thirty seconds later; anything it
+# leaves running in the background when it exits is stopped too.
 #
 # Provider credentials come from that provider's build_context, which has already
-# run. On GitHub that means $GH_TOKEN and $GITHUB_ACCOUNT, so `gh` is
-# authenticated and ready:
+# run, and are provider-shaped by nature: on GitHub that means $GH_TOKEN and
+# $GITHUB_ACCOUNT, so `gh` is authenticated and ready. $REPOSITORY_URL is NOT
+# the repository just created -- it is the application's own field, still empty
+# when the name came from metadata.
 #
-#   gh api --method PUT "/repos/$GITHUB_ACCOUNT/$REPOSITORY_NAME/environments/production"
+# This step reads NOTHING out of $APPLICATION. Which field decides what gets
+# scaffolded -- an architecture, a language, a field whose values are the names
+# of vegetables -- is the script's business and stays the script's business. One
+# trigger here, every branch on the other side: that is the whole split, and it
+# is what lets two installations scaffold on entirely different metadata without
+# either of them touching this repository.
 #
-# This file is SOURCED into the workflow's shared shell:
+# Sibling scripts resolve with `$(dirname "$0")`: $0 is the absolute path above,
+# so it works from any working directory.
+#
+#
+# ## What the script owes back
+#
+#   exit 0     scaffolding done, the workflow continues
+#   exit != 0  scaffolding failed and the workflow stops. The application is not
+#              created -- but the repository already is, so a retry runs into
+#              validate_repository_does_not_exist and needs that repository gone
+#              first. Fail on what leaves the repository unusable, not on the
+#              optional extras.
+#
+# Its stdout and stderr -- merged here, so neither depends on how the workflow
+# engine treats a step's stderr -- become the hook's messages. They reach the
+# developer when the workflow ends, not while the script runs: the application
+# waits in `pending_hook` with nothing to show until then.
+#
+# To write a field back to the application, use the callback body. `np application
+# update` answers 403 here: the entity is frozen until the hook closes. The helper
+# works from the subprocess because $ALM_CALLBACK_BODY_FILE is exported too:
+#
+#   source "$ALM_SCRIPTS_DIR/callback_body"
+#   alm_callback_body_set repository_app_path "services/$REPOSITORY_NAME"
+#
+#
+# ## This file itself
+#
+# SOURCED into the workflow's shared shell -- the orchestrator is not, but this
+# wrapper is:
 #   return 0   continue
 #   exit 1     stop the workflow
 #   exit 0     NEVER -- it ends the shared shell and silently skips every step
 #              that follows
 #
-# stdout becomes the hook's messages.
-#
-# To write a field back to the application, use the callback body rather than
-# `np application update`: an application being created answers 403 to that for a
-# window at the start of the hook, and the callback does not have to race it.
-#
-#   SCAFFOLD_DIR=$(dirname "${BASH_SOURCE[0]}")
-#   # shellcheck source=scripts/callback_body
-#   source "$SCAFFOLD_DIR/../callback_body"
-#   alm_callback_body_set repository_app_path "services/$REPOSITORY_NAME"
-#
-# Mind the budget: every second here is a second the developer waits on the
-# console spinner, with the application still held in pending_hook. Long or
-# optional work belongs in an asynchronous after hook, not in this step.
+# Mind the budget: the application is held in `pending_hook` for as long as this
+# runs, and creation is blocked for the whole NRN. TRIGGER_SCAFFOLD_TIMEOUT is
+# the ceiling on that, not a target. Long or optional work belongs in an
+# asynchronous after hook, not in this step.
 
-echo "scaffold_repository: no scaffolding configured"
+if [[ -z "${TRIGGER_SCAFFOLD_SCRIPT:-}" ]]; then
+  echo "No TRIGGER_SCAFFOLD_SCRIPT configured, leaving the repository as the template left it"
+  return 0
+fi
+
+# Absolute only. The variable is set once on the agent and serves every
+# application it ever scaffolds, while the working directory here belongs to this
+# repository -- a relative path would quietly resolve against our scripts/ and
+# mean something nobody intended.
+if [[ "$TRIGGER_SCAFFOLD_SCRIPT" != /* ]]; then
+  echo "ERROR: TRIGGER_SCAFFOLD_SCRIPT must be an absolute path on the agent host, got '$TRIGGER_SCAFFOLD_SCRIPT'."
+  exit 1
+fi
+
+if [[ ! -f "$TRIGGER_SCAFFOLD_SCRIPT" ]]; then
+  echo "ERROR: TRIGGER_SCAFFOLD_SCRIPT is set to '$TRIGGER_SCAFFOLD_SCRIPT', which is not a file on the agent host."
+  exit 1
+fi
+
+if [[ ! -r "$TRIGGER_SCAFFOLD_SCRIPT" ]]; then
+  echo "ERROR: TRIGGER_SCAFFOLD_SCRIPT '$TRIGGER_SCAFFOLD_SCRIPT' exists but the agent cannot read it."
+  exit 1
+fi
+
+# Absolute, so the orchestrator can reach the helpers from wherever it runs.
+ALM_SCRIPTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export ALM_SCRIPTS_DIR
+
+# A `before` hook fails closed, so for as long as this runs no application can be
+# created anywhere under the NRN. The ceiling is about how long that blockade is
+# tolerable, which is a smaller number than how long a scaffolding could take.
+TRIGGER_SCAFFOLD_TIMEOUT="${TRIGGER_SCAFFOLD_TIMEOUT:-15m}"
+
+if [[ ! "$TRIGGER_SCAFFOLD_TIMEOUT" =~ ^([0-9]+)([smhd]?)$ ]]; then
+  echo "ERROR: TRIGGER_SCAFFOLD_TIMEOUT must be a number of seconds, optionally suffixed with s, m, h or d, got '$TRIGGER_SCAFFOLD_TIMEOUT'."
+  exit 1
+fi
+
+# In seconds, which is what the watchdog below sleeps on: `sleep 15m` is not
+# portable, `sleep 900` is. 10# so a leading zero is not read as octal.
+case "${BASH_REMATCH[2]}" in
+  m) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]} * 60)) ;;
+  h) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]} * 3600)) ;;
+  d) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]} * 86400)) ;;
+  *) SCAFFOLD_TIMEOUT_SECONDS=$((10#${BASH_REMATCH[1]})) ;;
+esac
+
+# Zero would stop the script before it could do anything, which is never what
+# someone writing it means: more likely "no limit", which is the one thing this
+# ceiling exists to rule out.
+if [[ "$SCAFFOLD_TIMEOUT_SECONDS" -eq 0 ]]; then
+  echo "ERROR: TRIGGER_SCAFFOLD_TIMEOUT must be more than zero, got '$TRIGGER_SCAFFOLD_TIMEOUT'. Unset it for the default of 15m."
+  exit 1
+fi
+
+# What runs the script. Three ways in, in the order they are asked for:
+#
+#   TRIGGER_SCAFFOLD_INTERPRETER set   that command line, the script as its last
+#                                      argument -- `python3`, `mise exec --`,
+#                                      anything on the agent's PATH
+#   the script is executable           itself, so its own shebang decides
+#   otherwise                          bash, which is what most of them are
+#
+# The variable is word-split on purpose: it is a command line, not a binary, and
+# `mise exec --` is three words before the script ever appears.
+if [[ -n "${TRIGGER_SCAFFOLD_INTERPRETER:-}" ]]; then
+  read -r -a SCAFFOLD_INTERPRETER <<<"$TRIGGER_SCAFFOLD_INTERPRETER"
+
+  if ! command -v "${SCAFFOLD_INTERPRETER[0]}" >/dev/null 2>&1; then
+    echo "ERROR: TRIGGER_SCAFFOLD_INTERPRETER starts with '${SCAFFOLD_INTERPRETER[0]}', which is not on the agent host's PATH."
+    exit 1
+  fi
+
+  SCAFFOLD_RUNNER=("${SCAFFOLD_INTERPRETER[@]}" "$TRIGGER_SCAFFOLD_SCRIPT")
+elif [[ -x "$TRIGGER_SCAFFOLD_SCRIPT" ]]; then
+  SCAFFOLD_RUNNER=("$TRIGGER_SCAFFOLD_SCRIPT")
+else
+  SCAFFOLD_RUNNER=(bash "$TRIGGER_SCAFFOLD_SCRIPT")
+fi
+
+# Seconds between the TERM at the ceiling and the KILL for whatever ignored it.
+# Not an operator setting -- the tests shorten it so a TERM-deaf case does not
+# cost them half a minute.
+SCAFFOLD_KILL_GRACE="${SCAFFOLD_KILL_GRACE:-30}"
+
+echo "Running scaffolding script: $TRIGGER_SCAFFOLD_SCRIPT (timeout $TRIGGER_SCAFFOLD_TIMEOUT)"
+
+# One directory for this run, removed as soon as the step ends: the script's
+# working directory inside it, and the watchdog's flag beside it, where the
+# script cannot delete it by cleaning up after itself. Whatever the orchestrator
+# clones, downloads or unpacks leaves nothing behind on an agent host that is
+# long-lived and scaffolds every application that comes through. Agnostic on
+# purpose: nothing here ever looks inside the working directory.
+#
+# Created last, after every check that can `exit 1`: an exit between this and the
+# `rm -rf` below would leave one directory behind per failed creation, and a
+# misconfiguration fails every creation.
+if ! SCAFFOLD_RUN_DIR=$(mktemp -d); then
+  echo "ERROR: could not create a working directory for the scaffolding script."
+  exit 1
+fi
+
+SCAFFOLD_WORKDIR="$SCAFFOLD_RUN_DIR/work"
+SCAFFOLD_TIMED_OUT_FLAG="$SCAFFOLD_RUN_DIR/timed-out"
+SCAFFOLD_DONE_FLAG="$SCAFFOLD_RUN_DIR/done"
+mkdir "$SCAFFOLD_WORKDIR"
+export SCAFFOLD_WORKDIR
+
+# The ceiling is enforced here rather than by `timeout`, because `timeout` is not
+# one program. GNU's signals the script's whole process group; busybox's -- the
+# one a busybox agent image carries -- signals only the process it started. A
+# scaffolding script is a tree (git, gh, npm, or just the second line of a bash
+# script), and under busybox the rest of that tree outlived the ceiling. It also
+# kept the step's stdout open, and the entrypoint captures the workflow's stdout,
+# so the hook went on waiting for it: a 2s ceiling held creation for as long as
+# the script cared to take. Exit codes differ too (124 against 143), so even the
+# message depended on which one was installed.
+#
+# So the script runs in a process group of its own -- job control, `set -m`, is
+# what gives a background job one -- and a watchdog in another group signals the
+# whole of it: TERM at the ceiling, KILL SCAFFOLD_KILL_GRACE seconds later for
+# anything that ignored it. It marks a flag before it fires, so "stopped" is
+# known rather than guessed from an exit code. Only the two background launches
+# run with job control on, and the shell's own setting is put back: this file is
+# sourced into the workflow's shared shell.
+#
+# In the script's group, a subshell that execs it, and both halves earn their
+# keep. The subprocess keeps an `exit 0` of the orchestrator's -- the most
+# ordinary last line a script can have -- from ending this shared shell and
+# silently skipping create_secrets and run_first_build. The subshell keeps its
+# `cd` from escaping: every later step is loaded by a path relative to this
+# repository, so a working directory that moved would break add_collaborators
+# onwards rather than the orchestrator.
+#
+# stdin is closed too: a `read` left in by accident has nothing to wait for, and
+# waiting is the one failure mode the ceiling turns into a fifteen minute outage
+# instead of an error. stderr is merged into stdout, so the script's errors reach
+# the hook's messages whatever the engine does with a step's stderr.
+case "$-" in
+  *m*) SCAFFOLD_HAD_JOB_CONTROL=1 ;;
+  *)   SCAFFOLD_HAD_JOB_CONTROL=0 ;;
+esac
+
+set -m
+( cd "$SCAFFOLD_WORKDIR" && exec "${SCAFFOLD_RUNNER[@]}" ) </dev/null 2>&1 &
+SCAFFOLD_PID=$!
+
+# The watchdog is told to stop, and it also checks it is still wanted: a
+# subshell sent TERM right as its `sleep` starts was seen to lose the signal and
+# carry on, flag a script that had long finished as timed out, and later signal a
+# process group whose number may by then belong to something else. So it exits on
+# TERM explicitly -- `wait` returns at once on a trapped signal, where a
+# foreground `sleep` would be waited out -- and it acts only while the step has
+# not written $SCAFFOLD_DONE_FLAG.
+(
+  trap 'exit 0' TERM
+  sleep "$SCAFFOLD_TIMEOUT_SECONDS" & wait "$!"
+  [[ -e "$SCAFFOLD_DONE_FLAG" ]] && exit 0
+  : > "$SCAFFOLD_TIMED_OUT_FLAG"
+  kill -TERM -- "-$SCAFFOLD_PID"
+  sleep "$SCAFFOLD_KILL_GRACE" & wait "$!"
+  [[ -e "$SCAFFOLD_DONE_FLAG" ]] && exit 0
+  kill -KILL -- "-$SCAFFOLD_PID"
+) </dev/null >/dev/null 2>&1 &
+SCAFFOLD_WATCHDOG_PID=$!
+[[ "$SCAFFOLD_HAD_JOB_CONTROL" -eq 1 ]] || set +m
+
+SCAFFOLD_STATUS=0
+wait "$SCAFFOLD_PID" 2>/dev/null || SCAFFOLD_STATUS=$?
+
+# The watchdog and the sleep it is in, both: its group, not just the subshell.
+: > "$SCAFFOLD_DONE_FLAG"
+kill -TERM -- "-$SCAFFOLD_WATCHDOG_PID" 2>/dev/null
+wait "$SCAFFOLD_WATCHDOG_PID" 2>/dev/null
+
+# The script is done, but what it started in the background may not be, and
+# anything left in its group still holds the step's stdout -- the hook would wait
+# on it with no ceiling left to stop it. A scaffolding has no business leaving
+# processes behind on the agent host, so they go, and the operator is told.
+if kill -0 -- "-$SCAFFOLD_PID" 2>/dev/null; then
+  echo "WARNING: the scaffolding script left processes running when it exited; stopping them."
+  kill -TERM -- "-$SCAFFOLD_PID" 2>/dev/null
+  sleep 2
+  kill -KILL -- "-$SCAFFOLD_PID" 2>/dev/null
+fi
+
+SCAFFOLD_TIMED_OUT=0
+[[ -e "$SCAFFOLD_TIMED_OUT_FLAG" ]] && SCAFFOLD_TIMED_OUT=1
+
+rm -rf "$SCAFFOLD_RUN_DIR"
+unset SCAFFOLD_RUN_DIR SCAFFOLD_WORKDIR SCAFFOLD_TIMED_OUT_FLAG SCAFFOLD_DONE_FLAG \
+  SCAFFOLD_RUNNER SCAFFOLD_PID SCAFFOLD_WATCHDOG_PID SCAFFOLD_HAD_JOB_CONTROL
+
+if [[ "$SCAFFOLD_TIMED_OUT" -eq 1 ]]; then
+  echo "ERROR: the scaffolding script '$TRIGGER_SCAFFOLD_SCRIPT' did not finish within $TRIGGER_SCAFFOLD_TIMEOUT and was stopped."
+  echo "Raise TRIGGER_SCAFFOLD_TIMEOUT on the agent if the work legitimately takes longer, or move it out of this hook."
+  echo "The repository exists but is not fully scaffolded; it has to be removed before this application can be created again."
+  exit 1
+fi
+
+if [[ "$SCAFFOLD_STATUS" -ne 0 ]]; then
+  echo "ERROR: the scaffolding script '$TRIGGER_SCAFFOLD_SCRIPT' failed with status $SCAFFOLD_STATUS."
+  echo "The repository exists but is not fully scaffolded; it has to be removed before this application can be created again."
+  exit 1
+fi
+
+echo "Scaffolding finished"
 
 return 0
