@@ -119,22 +119,6 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$CALLBACK_URL" \
     -H "Content-Type: application/json" \
     -d "$payload")
 
-# A refused close leaves the hook pending, and a pending before-hook blocks every
-# application creation in the NRN. The slug is the one field handed over here
-# that the application's ordinary update does not accept, so a refusal while
-# carrying it is retried once without it: the application keeps the slug it was
-# born with, and the warning says so, instead of the namespace freezing.
-if [[ ! "$HTTP_CODE" =~ ^2 ]] && jq -e '.callback_body | has("slug")' >/dev/null 2>&1 <<< "$payload"; then
-  echo "WARNING: closing the hook with a new slug was refused (HTTP $HTTP_CODE). Closing it again without the slug; the application keeps the one it was created with, so anything built from the new slug during this run -- the asset repository path, the CI api key name -- will not match it."
-
-  payload=$(jq -c 'del(.callback_body.slug)' <<< "$payload")
-
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$CALLBACK_URL" \
-      -H "Authorization: Bearer $TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "$payload")
-fi
-
 if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
     echo "✓ Successfully updated hook (HTTP $HTTP_CODE)"
 else

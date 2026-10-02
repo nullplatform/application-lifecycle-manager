@@ -430,34 +430,26 @@ REPOSITORY_NAME_DERIVED="true"
 export REPOSITORY_NAME
 export REPOSITORY_NAME_DERIVED
 
-# Opt-in: the application takes the repository's name as its name AND its slug,
-# so whatever was typed in the console's Name field does not outlive the hook.
+# Opt-in: the application takes the repository's name as its name, so what the
+# console shows is what the metadata produced rather than whatever was typed in
+# its Name field. It travels in the callback body, which entrypoint only sends
+# when the hook succeeds, so a failed run renames nothing.
 #
-# Both travel in the callback body. An application in pending_hook takes them
-# there -- the slug included, which its ordinary update endpoint does not accept
-# -- and entrypoint only sends that body when the hook succeeds, so a failed run
-# renames nothing.
-#
-# APPLICATION_SLUG is switched here as well, and here rather than next to the
-# repository_url in create_repository: the steps after this one build things out
-# of it -- the asset repository path, the CI api key's name, the scaffolding
-# script's environment -- and create_repository runs inside a nested workflow
-# whose exports never reach create_asset_repository. Left alone, those would be
-# named after the typed slug the hook is about to replace.
+# The name only. The slug is fixed when the application is created: a callback
+# body carrying one is answered 204 and the slug is then ignored -- measured
+# against a real hook -- so nothing here sends it or switches APPLICATION_SLUG.
+# Doing so would name the asset repository and the CI api key after a slug the
+# application never gets.
 if [[ "${APPLICATION_NAME_FROM_REPOSITORY:-}" == "true" ]]; then
   RESOLVE_TYPED_NAME=$(jq -r '.name // empty' <<<"$APPLICATION")
-  RESOLVE_TYPED_SLUG="${APPLICATION_SLUG:-$(jq -r '.slug // empty' <<<"$APPLICATION")}"
 
   # shellcheck source=scripts/callback_body
   source "$(dirname "${BASH_SOURCE[0]}")/../callback_body"
 
-  if ! alm_callback_body_set name "$RESOLVE_NAME" || ! alm_callback_body_set slug "$RESOLVE_NAME"; then
-    echo "ERROR: could not hand the application its new name and slug ('$RESOLVE_NAME'). Failing here rather than creating a repository the application will not be named after."
+  if ! alm_callback_body_set name "$RESOLVE_NAME"; then
+    echo "ERROR: could not hand the application its new name ('$RESOLVE_NAME'). Failing here rather than creating a repository the application will not be named after."
     exit 1
   fi
 
-  APPLICATION_SLUG="$RESOLVE_NAME"
-  export APPLICATION_SLUG
-
-  echo "Application renamed after its repository: name '${RESOLVE_TYPED_NAME:-?}' and slug '${RESOLVE_TYPED_SLUG:-?}' become '$RESOLVE_NAME'"
+  echo "Application renamed after its repository: '${RESOLVE_TYPED_NAME:-?}' becomes '$RESOLVE_NAME' (its slug stays '${APPLICATION_SLUG:-?}')"
 fi
