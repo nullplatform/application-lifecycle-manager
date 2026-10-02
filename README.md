@@ -322,6 +322,26 @@ every application before the hook ever runs.
 > before creating the repository must not leave the application pointing at something that does not
 > exist.
 
+##### Renaming the application after its repository
+
+The console's Name field cannot be removed, and whatever is typed there becomes the application's
+slug. With `APPLICATION_NAME_FROM_REPOSITORY=true` on the agent, the derived repository name
+replaces both: it goes into the `callback_body` as `name` and `slug`, so the application finishes
+its creation named — and slugged — after its repository.
+
+```hcl
+extra_envs = {
+  APPLICATION_NAME_FROM_REPOSITORY = "true"
+}
+```
+
+- It only applies when a name was derived from the rule, and only lands when the hook succeeds.
+- `APPLICATION_SLUG` switches to the new slug as soon as the name is derived, so the asset
+  repository path, the CI api key's name and the scaffolding script all use it.
+- If the platform refuses the close because of the slug, entrypoint closes the hook again without
+  it, with a `WARNING`: the application keeps its original slug instead of the hook staying pending
+  and blocking the NRN. Anything built from the new slug during that run will not match it.
+
 #### Using GitHub
 
 To use GitHub as the code repository provider, set `CODE_REPOSITORY_PROVIDER=github` in the

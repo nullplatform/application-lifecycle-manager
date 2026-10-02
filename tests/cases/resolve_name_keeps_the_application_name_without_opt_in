@@ -1,0 +1,32 @@
+#!/bin/bash
+# Renaming the application is opt-in, like everything else this hook adds: an
+# installation that derives repository names but never set
+# APPLICATION_NAME_FROM_REPOSITORY keeps the name and slug the console gave the
+# application, and the callback body carries nothing about them.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+export CODE_REPOSITORY_STRATEGY="create"
+unset APPLICATION_NAME_FROM_REPOSITORY
+export APPLICATION_SLUG="whatever-was-typed"
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.name = "Whatever Was Typed" | .slug = "whatever-was-typed"')
+export APPLICATION
+
+slug=$(capture_code_repo_export resolve_repository_name APPLICATION_SLUG)
+
+if [[ "$slug" != "whatever-was-typed" ]]; then
+  echo "  FAIL: expected APPLICATION_SLUG untouched without the opt-in, got '$slug'"
+  exit 1
+fi
+
+if [[ -s "$ALM_CALLBACK_BODY_FILE" ]] && jq -e 'has("name") or has("slug")' "$ALM_CALLBACK_BODY_FILE" >/dev/null 2>&1; then
+  echo "  FAIL: expected no name or slug in the callback body without the opt-in, got: $(cat "$ALM_CALLBACK_BODY_FILE")"
+  exit 1
+fi
