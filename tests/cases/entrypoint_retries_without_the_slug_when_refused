@@ -1,0 +1,43 @@
+#!/bin/bash
+# A callback body the platform refuses leaves the hook pending, and a pending
+# before-hook blocks every application creation in the NRN. The slug is the one
+# field this hook hands over that the application's ordinary update does not
+# accept, so if the close is refused while carrying it, entrypoint closes again
+# without it: the application then keeps the slug it was born with -- and says
+# so -- instead of freezing the namespace.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CALLBACK_URL="https://api.nullplatform.com/entity_hook/abc123"
+
+export NP_API_KEY="test-key"
+export NP_ACTION_CONTEXT="{\"notification\":{\"callback_url\":\"$CALLBACK_URL\",\"nrn\":\"organization=1:account=2:namespace=3:application=4\"}}"
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+echo '{"repository_url":"https://github.com/acme/net-app-fire-issuance","name":"net-app-fire-issuance","slug":"net-app-fire-issuance"}' > "$ALM_CALLBACK_BODY_FILE"
+
+fixture_seq PATCH "$CALLBACK_URL" 1 400 '{"message":"invalid field slug"}'
+fixture_seq PATCH "$CALLBACK_URL" 2 200 ""
+
+output=$(cd "$REPO_ROOT" && bash entrypoint 2>&1)
+
+calls=$(grep -cF "$(printf 'PATCH\t%s\t' "$CALLBACK_URL")" "$BB_CALLS")
+if [[ "$calls" -ne 2 ]]; then
+  echo "  FAIL: expected the hook to be closed twice (refused, then without the slug), got $calls call(s)"
+  exit 1
+fi
+
+second=$(grep -F "$(printf 'PATCH\t%s\t' "$CALLBACK_URL")" "$BB_CALLS" | sed -n 2p | cut -f3)
+
+if ! printf '%b' "$second" | jq -e '.callback_body | (has("slug") | not) and .name == "net-app-fire-issuance" and .repository_url == "https://github.com/acme/net-app-fire-issuance"' >/dev/null 2>&1; then
+  echo "  FAIL: expected the retry to drop only the slug, sent:"
+  printf '%b\n' "$second" | sed 's/^/    /'
+  exit 1
+fi
+
+if [[ "$output" != *"WARNING"*"slug"* ]]; then
+  echo "  FAIL: expected a WARNING naming the slug, got:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  exit 1
+fi

@@ -1,0 +1,45 @@
+#!/bin/bash
+# With APPLICATION_NAME_FROM_REPOSITORY=true the application stops answering to
+# whatever was typed in the console's Name field: the derived repository name
+# becomes its name and its slug, handed over in the callback body the way the
+# repository_url already is.
+#
+# The slug is also switched in this run, not only in the callback. The steps
+# after this one build things out of APPLICATION_SLUG -- the asset repository
+# path, the CI api key, the scaffolding script's environment -- and one built
+# from the typed name would be left behind when the hook closes with the new one.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+export CODE_REPOSITORY_STRATEGY="create"
+export APPLICATION_NAME_FROM_REPOSITORY="true"
+export APPLICATION_SLUG="whatever-was-typed"
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.name = "Whatever Was Typed" | .slug = "whatever-was-typed"')
+export APPLICATION
+
+slug=$(capture_code_repo_export resolve_repository_name APPLICATION_SLUG)
+
+if [[ "$slug" != "net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected APPLICATION_SLUG to become the repository name for the rest of the run, got '$slug'"
+  exit 1
+fi
+
+for key in name slug; do
+  got=$(jq -r --arg k "$key" '.[$k] // empty' "$ALM_CALLBACK_BODY_FILE" 2>/dev/null)
+
+  if [[ "$got" != "net-app-fire-issuance" ]]; then
+    echo "  FAIL: expected '$key' = the repository name in the callback body, got '$got'"
+    echo "  callback body: $(cat "$ALM_CALLBACK_BODY_FILE" 2>/dev/null)"
+    exit 1
+  fi
+done
+
+run_code_repo_step resolve_repository_name
+assert_contains "whatever-was-typed" || exit 1
