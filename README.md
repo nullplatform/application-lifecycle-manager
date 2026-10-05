@@ -324,9 +324,10 @@ every application before the hook ever runs.
 
 ##### Renaming the application after its repository
 
-The console's Name field cannot be removed. With `APPLICATION_NAME_FROM_REPOSITORY=true` on the
-agent, the derived repository name replaces what was typed there: it goes into the
-`callback_body` as `name`, so the application finishes its creation named after its repository.
+The console's Name field cannot be removed, and whatever is typed there becomes the application's
+slug. With `APPLICATION_NAME_FROM_REPOSITORY=true` on the agent, the derived repository name
+replaces both: it goes into the `callback_body` as `name` and `slug`, so the application finishes
+its creation named — and slugged — after its repository.
 
 ```hcl
 extra_envs = {
@@ -335,9 +336,11 @@ extra_envs = {
 ```
 
 - It only applies when a name was derived from the rule, and only lands when the hook succeeds.
-- **The slug does not change.** It is fixed from the typed name when the application is created. A
-  `callback_body` carrying `slug` is answered `204` and the slug is then ignored, so this hook does
-  not send one, and the asset repository and the CI api key keep using the application's real slug.
+- `APPLICATION_SLUG` switches to the new slug as soon as the name is derived, so the asset
+  repository path, the CI api key's name and the scaffolding script all use it.
+- If the platform refuses the close because of the slug, entrypoint closes the hook again without
+  it, with a `WARNING`: the application keeps its original slug instead of the hook staying pending
+  and blocking the NRN. Anything built from the new slug during that run will not match it.
 
 #### Using GitHub
 
