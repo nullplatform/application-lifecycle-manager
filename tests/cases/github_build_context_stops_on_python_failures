@@ -1,0 +1,49 @@
+#!/bin/bash
+# resolve_python stops the workflow with `exit 1` only because build_context
+# sources it. Run in a subshell or behind `|| true`, an empty PYTHON would reach
+# the signing and fail much later, with an obscure error. And a signature that
+# fails under mise's python must be reported like one under the system python3.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+TOKEN_URL="https://api.github.com/app/installations/999/access_tokens"
+
+export GITHUB_APP_ID="123" GITHUB_PRIVATE_KEY="pem" GITHUB_INSTALLATION_ID="999" GITHUB_ACCOUNT="acme"
+export PYTHON_STUB_NO_CRYPTO=1
+mise_python_stub
+
+failed=0
+
+export MISE_STUB_PIP_FAIL=1
+run_code_repo_step github/build_context
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: a failed python setup should stop build_context, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"pip could not install"* ]]; then
+  echo "  FAIL: the python setup failure was not reported in:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+if grep -qF "$TOKEN_URL" "$BB_CALLS" || grep -q "sign_app_jwt.py" "$BB_CALLS"; then
+  echo "  FAIL: build_context carried on after the python setup failed. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  failed=1
+fi
+unset MISE_STUB_PIP_FAIL
+
+export MISE_STUB_SIGN_FAIL=1
+run_code_repo_step github/build_context
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: a failed signature under mise's python should exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"failed to build the GitHub App JWT"* ]]; then
+  echo "  FAIL: the signing failure was not reported in:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"

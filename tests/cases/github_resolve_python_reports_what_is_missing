@@ -1,38 +1,60 @@
 #!/bin/bash
-# Two ways to end up without a python that can sign, and both must stop the
-# workflow here with a reason. Carrying on fails later with an empty JWT, which
-# says nothing about the missing interpreter.
+# Every way of ending up without a python that can sign must stop the workflow
+# here, naming the stage that broke. "failed to build the GitHub App JWT" later on
+# says nothing about whether mise, pip or the import was the problem.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
 
 failed=0
 
+# expect_failure LABEL MESSAGE -- the last run_resolve_python stopped with MESSAGE.
+expect_failure() {
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL ($1): expected exit 1, got $STEP_STATUS"
+    failed=1
+  elif [[ "$STEP_OUTPUT" != *"$2"* ]]; then
+    echo "  FAIL ($1): expected '$2' in:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
 # Neither python3 nor mise on PATH.
 mkdir -p "$TEST_TMP/empty-bin"
 run_resolve_python "$TEST_TMP/empty-bin"
+expect_failure "no python, no mise" "python3 not found, and mise is not available"
 
-if [[ "$STEP_STATUS" != 1 ]]; then
-  echo "  FAIL: no python and no mise should exit 1, got $STEP_STATUS"
-  failed=1
-elif [[ "$STEP_OUTPUT" != *"mise is not available to install it"* ]]; then
-  echo "  FAIL: the missing interpreter was not explained in:"
-  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
-  failed=1
-fi
+# A python3 without cryptography, and no mise.
+mkdir -p "$TEST_TMP/python-only-bin"
+ln -s "$REPO_ROOT/tests/stubs/python3" "$TEST_TMP/python-only-bin/python3"
+export PYTHON_STUB_NO_CRYPTO=1
+run_resolve_python "$TEST_TMP/python-only-bin"
+expect_failure "python3 without cryptography, no mise" "No module named 'cryptography'"
 
-# mise is there, but cryptography does not install.
-export PYTHON_STUB_NO_CRYPTO=1 MISE_STUB_PIP_FAIL=1
 mise_python_stub
-run_resolve_python
 
-if [[ "$STEP_STATUS" != 1 ]]; then
-  echo "  FAIL: a failed cryptography install should exit 1, got $STEP_STATUS"
-  failed=1
-elif [[ "$STEP_OUTPUT" != *"could not install python with the cryptography package via mise"* ]]; then
-  echo "  FAIL: the failed install was not reported in:"
-  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+# mise cannot install python: its error must reach the log, and pip is not tried.
+export MISE_STUB_INSTALL_FAIL=1
+run_resolve_python
+expect_failure "mise install" "mise could not provide python@3.12"
+expect_failure "mise install, its stderr" "missing a lib directory"
+if grep -q "pip install" "$BB_CALLS"; then
+  echo "  FAIL (mise install): pip ran after mise failed to provide python"
   failed=1
 fi
+unset MISE_STUB_INSTALL_FAIL
+
+# pip cannot install cryptography.
+export MISE_STUB_PIP_FAIL=1
+run_resolve_python
+expect_failure "pip" "pip could not install cryptography==50.0.2"
+unset MISE_STUB_PIP_FAIL
+
+# pip succeeded, the import still fails.
+export MISE_STUB_IMPORT_FAIL=1
+run_resolve_python
+expect_failure "import after install" "installed but cannot be imported: ImportError: libssl"
+unset MISE_STUB_IMPORT_FAIL
 
 exit "$failed"

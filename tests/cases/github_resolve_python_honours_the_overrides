@@ -1,0 +1,23 @@
+#!/bin/bash
+# PYTHON_MISE_VERSION and CRYPTOGRAPHY_VERSION are documented ways out of the pins,
+# for when a newer mise or wheel changes what installs on the agent image.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export PYTHON_STUB_NO_CRYPTO=1 PYTHON_MISE_VERSION=3.11 CRYPTOGRAPHY_VERSION=1.2.3
+mise_python_stub
+
+run_resolve_python
+assert_status 0 || exit 1
+
+if [[ "$RESOLVED_PYTHON" != "env MISE_PYTHON_COMPILE=0 mise exec python@3.11 -- python" ]]; then
+  echo "  FAIL: PYTHON_MISE_VERSION was not honoured, got '$RESOLVED_PYTHON'"
+  exit 1
+fi
+
+if ! grep -qF "cryptography==1.2.3" "$BB_CALLS"; then
+  echo "  FAIL: CRYPTOGRAPHY_VERSION was not honoured. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

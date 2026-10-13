@@ -1,7 +1,7 @@
 #!/bin/bash
 # The default and nonroot agent images ship no python, and a python3 without
 # cryptography cannot sign either. mise has to provide one, with the two settings
-# that make it install on Alpine, and add cryptography only once.
+# that make it install on Alpine.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
@@ -12,10 +12,13 @@ mise_python_stub
 run_resolve_python
 assert_status 0 || exit 1
 
-if [[ "$RESOLVED_PYTHON" != "mise exec python@3.12 -- python" ]]; then
+if [[ "$RESOLVED_PYTHON" != "env MISE_PYTHON_COMPILE=0 mise exec python@3.12 -- python" ]]; then
   echo "  FAIL: expected mise's python@3.12, got '$RESOLVED_PYTHON'"
   exit 1
 fi
+
+# The operator should see why the system python3 was passed over.
+assert_contains "No module named 'cryptography'" || exit 1
 
 if ! grep -qF "pip install --quiet --disable-pip-version-check cryptography==50.0.2" "$BB_CALLS"; then
   echo "  FAIL: expected a pinned cryptography install. Calls:"
@@ -29,7 +32,15 @@ if grep "^mise" "$BB_CALLS" | grep -qv "MISE_PYTHON_COMPILE=0$"; then
   exit 1
 fi
 
-# Same pod, second application: cryptography is already there.
+# The setting rides on the command: an export would reach every later step.
+leaked=$(cd "$REPO_ROOT" && source scripts/code-repo/github/resolve_python >/dev/null 2>&1 &&
+  printf '%s' "${MISE_PYTHON_COMPILE:-}")
+if [[ -n "$leaked" ]]; then
+  echo "  FAIL: MISE_PYTHON_COMPILE leaked into the caller's shell"
+  exit 1
+fi
+
+# Same pod, later application: cryptography is already there.
 run_resolve_python
 assert_status 0 || exit 1
 
