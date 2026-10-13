@@ -1,8 +1,11 @@
 #!/bin/bash
 # resolve_python stops the workflow with `exit 1` only because build_context
-# sources it. Run in a subshell or behind `|| true`, an empty PYTHON would reach
-# the signing and fail much later, with an obscure error. And a signature that
-# fails under mise's python must be reported like one under the system python3.
+# sources it. Run in a subshell, behind `|| true`, or with `return 1` instead, the
+# exit would be lost and build_context would go on to sign with an empty PYTHON,
+# failing later with an error that says nothing about python. So every way the
+# setup can fail is checked here, through build_context, not just resolve_python.
+# And a signature that fails under mise's python must be reported like one under
+# the system python3.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
@@ -15,35 +18,73 @@ mise_python_stub
 
 failed=0
 
-export MISE_STUB_PIP_FAIL=1
+# expect_stop LABEL MESSAGE [carried-on-pattern] -- the last build_context exited 1
+# with MESSAGE in its output, and its calls show nothing matching the pattern
+# (default: the signing or the token request).
+expect_stop() {
+  local label="$1" message="$2" carried_on="${3:-sign_app_jwt.py|$TOKEN_URL}"
+
+  if [[ "$STEP_STATUS" != 1 ]]; then
+    echo "  FAIL ($label): build_context should exit 1, got $STEP_STATUS"
+    failed=1
+  elif [[ "$STEP_OUTPUT" != *"$message"* ]]; then
+    echo "  FAIL ($label): expected '$message' in:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+
+  if grep -qE "$carried_on" "$BB_CALLS"; then
+    echo "  FAIL ($label): build_context carried on after it. Calls:"
+    sed 's/^/    /' "$BB_CALLS"
+    failed=1
+  fi
+
+  # Exit status and calls are not enough: with an empty PYTHON, build_context runs
+  # sign_app_jwt.py as a command, which is not executable, so nothing is recorded
+  # and it still exits 1 -- through the signing failure, after the setup "stopped".
+  if [[ "$message" != *"failed to build the GitHub App JWT"* &&
+        "$STEP_OUTPUT" == *"failed to build the GitHub App JWT"* ]]; then
+    echo "  FAIL ($label): build_context reached the signing after the setup failed:"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+# No mise at all. A PATH of the stubs plus what build_context needs on the way to
+# resolve_python, so a mise installed on the host cannot stand in.
+mkdir -p "$TEST_TMP/tools"
+for t in jq dirname sed grep awk cat tr cut; do
+  ln -sf "$(command -v "$t")" "$TEST_TMP/tools/$t"
+done
+saved_path="$PATH"
+export PATH="$REPO_ROOT/tests/stubs:$TEST_TMP/tools"
+: > "$BB_CALLS"
 run_code_repo_step github/build_context
+export PATH="$saved_path"
+expect_stop "no mise" "mise is not available"
 
-if [[ "$STEP_STATUS" != 1 ]]; then
-  echo "  FAIL: a failed python setup should stop build_context, got $STEP_STATUS"
-  failed=1
-elif [[ "$STEP_OUTPUT" != *"pip could not install"* ]]; then
-  echo "  FAIL: the python setup failure was not reported in:"
-  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
-  failed=1
-fi
+export MISE_STUB_INSTALL_FAIL=1
+: > "$BB_CALLS"
+run_code_repo_step github/build_context
+expect_stop "mise install" "mise could not provide python@3.12"
+unset MISE_STUB_INSTALL_FAIL
 
-if grep -qF "$TOKEN_URL" "$BB_CALLS" || grep -q "sign_app_jwt.py" "$BB_CALLS"; then
-  echo "  FAIL: build_context carried on after the python setup failed. Calls:"
-  sed 's/^/    /' "$BB_CALLS"
-  failed=1
-fi
+export MISE_STUB_PIP_FAIL=1
+: > "$BB_CALLS"
+run_code_repo_step github/build_context
+expect_stop "pip" "pip could not install"
 unset MISE_STUB_PIP_FAIL
 
-export MISE_STUB_SIGN_FAIL=1
+export MISE_STUB_IMPORT_FAIL=1
+: > "$BB_CALLS"
 run_code_repo_step github/build_context
+expect_stop "import after install" "installed but cannot be imported"
+unset MISE_STUB_IMPORT_FAIL
 
-if [[ "$STEP_STATUS" != 1 ]]; then
-  echo "  FAIL: a failed signature under mise's python should exit 1, got $STEP_STATUS"
-  failed=1
-elif [[ "$STEP_OUTPUT" != *"failed to build the GitHub App JWT"* ]]; then
-  echo "  FAIL: the signing failure was not reported in:"
-  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
-  failed=1
-fi
+# Here the signing does run; only the token request must not follow it.
+export MISE_STUB_SIGN_FAIL=1
+: > "$BB_CALLS"
+run_code_repo_step github/build_context
+expect_stop "signing" "failed to build the GitHub App JWT" "$TOKEN_URL"
 
 exit "$failed"

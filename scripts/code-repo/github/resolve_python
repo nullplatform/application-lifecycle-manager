@@ -33,12 +33,19 @@
 # too old or too broken to sign.
 py_probe='from cryptography.hazmat.primitives import hashes, serialization; from cryptography.hazmat.primitives.asymmetric import padding'
 
+# py_last_error OUTPUT -- the line worth quoting from a failed probe: a traceback
+# ends with the exception. A python that dies without a word still gets a reason.
+py_last_error() {
+  local last="${1##*$'\n'}"
+  printf '%s' "${last:-exited non-zero with no output}"
+}
+
 if command -v python3 >/dev/null 2>&1; then
   if py_error=$(python3 -c "$py_probe" 2>&1); then
     PYTHON=(python3)
     return 0
   fi
-  py_reason="python3 cannot sign (${py_error##*$'\n'})"
+  py_reason="python3 cannot sign ($(py_last_error "$py_error"))"
 else
   py_reason="python3 not found"
 fi
@@ -69,7 +76,7 @@ if ! "${PYTHON[@]}" -c "$py_probe" >/dev/null 2>&1; then
   fi
 
   if ! py_error=$("${PYTHON[@]}" -c "$py_probe" 2>&1); then
-    echo "ERROR: $py_crypto installed but cannot be imported: ${py_error##*$'\n'}"
+    echo "ERROR: $py_crypto installed but cannot be imported: $(py_last_error "$py_error")"
     exit 1
   fi
 fi

@@ -15,15 +15,28 @@
 #
 # $PYTHON_STUB_FAIL makes the signing fail, for the path that must react to it.
 # $PYTHON_STUB_NO_CRYPTO fails resolve_python's `-c` import probe, as on a python3
-# without the package.
+# without the package; $PYTHON_STUB_SILENT_FAIL fails it without a word.
+#
+# The probe passes only when it imports all three modules sign_app_jwt.py uses: a
+# probe weakened back to `import cryptography` would let a python3 through that
+# then cannot sign, and this is where that regression shows.
 
 printf 'python3\t%s\n' "$*" >> "$BB_CALLS"
 
 if [[ "$1" == "-c" ]]; then
+  if [[ -n "$PYTHON_STUB_SILENT_FAIL" ]]; then
+    exit 1
+  fi
   if [[ -n "$PYTHON_STUB_NO_CRYPTO" ]]; then
     echo "ModuleNotFoundError: No module named 'cryptography'" >&2
     exit 1
   fi
+  for module in hashes serialization padding; do
+    if [[ "$2" != *"$module"* ]]; then
+      echo "stub: the probe does not import '$module', which sign_app_jwt.py needs" >&2
+      exit 1
+    fi
+  done
   exit 0
 fi
 

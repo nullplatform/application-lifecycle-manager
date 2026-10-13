@@ -32,6 +32,12 @@ export PYTHON_STUB_NO_CRYPTO=1
 run_resolve_python "$TEST_TMP/python-only-bin"
 expect_failure "python3 without cryptography, no mise" "No module named 'cryptography'"
 
+# A python3 that dies without a word still gets a reason, not empty parentheses.
+export PYTHON_STUB_SILENT_FAIL=1
+run_resolve_python "$TEST_TMP/python-only-bin"
+expect_failure "silent python3, no mise" "python3 cannot sign (exited non-zero with no output)"
+unset PYTHON_STUB_SILENT_FAIL
+
 mise_python_stub
 
 # mise cannot install python: its error must reach the log, and pip is not tried.
