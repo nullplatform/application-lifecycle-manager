@@ -228,7 +228,8 @@ capture_code_repo_export() {
 run_resolve_python() {
   local __lib_out
 
-  # shellcheck disable=SC1091
+  # SC2030: the PATH change is meant to stay inside this subshell.
+  # shellcheck disable=SC1091,SC2030
   __lib_out=$(if [[ -n "${1:-}" ]]; then PATH="$1"; fi
     cd "$REPO_ROOT" && source scripts/code-repo/github/resolve_python 2>&1 &&
     printf '\n@PYTHON=%s' "${PYTHON[*]}")
@@ -276,6 +277,7 @@ esac
 MISE
   chmod +x "$TEST_TMP/mise-bin/mise"
 
+  # shellcheck disable=SC2031 # the PATH here is the caller's, not run_resolve_python's subshell
   export PATH="$TEST_TMP/mise-bin:$PATH"
 }
 
