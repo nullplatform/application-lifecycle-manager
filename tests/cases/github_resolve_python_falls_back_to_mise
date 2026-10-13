@@ -1,0 +1,63 @@
+#!/bin/bash
+# The default and nonroot agent images ship no python, and a python3 without
+# cryptography cannot sign either. mise has to provide one, with the two settings
+# that make it install on Alpine.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export PYTHON_STUB_NO_CRYPTO=1
+mise_python_stub
+
+run_resolve_python
+assert_status 0 || exit 1
+
+if [[ "$RESOLVED_PYTHON" != "env MISE_PYTHON_COMPILE=0 mise exec python@3.12 -- python" ]]; then
+  echo "  FAIL: expected mise's python@3.12, got '$RESOLVED_PYTHON'"
+  exit 1
+fi
+
+# The operator should see why the system python3 was passed over.
+assert_contains "No module named 'cryptography'" || exit 1
+
+if ! grep -qF "pip install --quiet --disable-pip-version-check cryptography==50.0.2" "$BB_CALLS"; then
+  echo "  FAIL: expected a pinned cryptography install. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+if grep "^mise" "$BB_CALLS" | grep -qv "MISE_PYTHON_COMPILE=0$"; then
+  echo "  FAIL: mise ran without MISE_PYTHON_COMPILE=0, so it would try to compile. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+# The setting rides on the command: an export would reach every later step.
+leaked=$(cd "$REPO_ROOT" && source scripts/code-repo/github/resolve_python >/dev/null 2>&1 &&
+  printf '%s' "${MISE_PYTHON_COMPILE:-}")
+if [[ -n "$leaked" ]]; then
+  echo "  FAIL: MISE_PYTHON_COMPILE leaked into the caller's shell"
+  exit 1
+fi
+
+# Same pod, later application: cryptography is already there.
+run_resolve_python
+assert_status 0 || exit 1
+
+if [[ "$(grep -c "pip install" "$BB_CALLS")" != 1 ]]; then
+  echo "  FAIL: cryptography was installed again on a python that already had it. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi
+
+# And build_context signs through it.
+export GITHUB_APP_ID="123" GITHUB_PRIVATE_KEY="pem" GITHUB_INSTALLATION_ID="999" GITHUB_ACCOUNT="acme"
+fixture POST "https://api.github.com/app/installations/999/access_tokens" 201 '{"token":"ghs_x"}'
+
+run_code_repo_step github/build_context
+
+if ! grep -qE "^mise"$'\t'"exec python@3.12 -- python .*/sign_app_jwt.py" "$BB_CALLS"; then
+  echo "  FAIL: build_context did not sign with mise's python. Calls:"
+  sed 's/^/    /' "$BB_CALLS"
+  exit 1
+fi

@@ -57,14 +57,11 @@ done
 # shellcheck source=scripts/code-repo/github/install_gh
 source "$CURRENT_DIR/install_gh"
 
-# The JWT is built with python3 because the agent image ships no openssl binary, and openssl is
-# available neither through mise nor through the image's apk index.
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "ERROR: python3 is required to sign the GitHub App JWT but is not available in this environment."
-  exit 1
-fi
+# The system python3 when it can sign, mise otherwise. See the header of resolve_python.
+# shellcheck source=scripts/code-repo/github/resolve_python
+source "$CURRENT_DIR/resolve_python"
 
-JWT=$(python3 "$CURRENT_DIR/sign_app_jwt.py")
+JWT=$("${PYTHON[@]}" "$CURRENT_DIR/sign_app_jwt.py")
 
 if [[ -z "$JWT" ]]; then
   echo "ERROR: failed to build the GitHub App JWT."

@@ -218,6 +218,69 @@ capture_code_repo_export() {
   )
 }
 
+# run_resolve_python [PATH] -> STEP_OUTPUT, STEP_STATUS, RESOLVED_PYTHON
+#
+# resolve_python leaves an ARRAY in the caller's shell, which neither
+# run_code_repo_step nor capture_code_repo_export can hand back. This helper
+# sources it in a subshell, prints PYTHON space-joined on a marked `@PYTHON=` line
+# and parses it back out. PATH, when given, REPLACES the step's PATH -- nothing
+# outside it is found -- and only the step's: the parsing still needs sed and grep.
+run_resolve_python() {
+  local __lib_out
+
+  # SC2030: the PATH change is meant to stay inside this subshell.
+  # shellcheck disable=SC1091,SC2030
+  __lib_out=$(if [[ -n "${1:-}" ]]; then PATH="$1"; fi
+    cd "$REPO_ROOT" && source scripts/code-repo/github/resolve_python 2>&1 &&
+    printf '\n@PYTHON=%s' "${PYTHON[*]}")
+  STEP_STATUS=$?
+  # shellcheck disable=SC2034 # read by the cases
+  RESOLVED_PYTHON=$(printf '%s\n' "$__lib_out" | sed -n 's/^@PYTHON=//p')
+  STEP_OUTPUT=$(printf '%s\n' "$__lib_out" | grep -v '^@PYTHON=')
+}
+
+# mise_python_stub -- a mise whose python starts without `cryptography` and gets it
+# from `pip install`, like a fresh mise python on the agent image. Each call is
+# recorded with the MISE_PYTHON_COMPILE it saw. Calls are told apart by argument
+# (` --version `, ` -c `, ` pip install `); anything else is taken as the signing.
+# Failures, one per stage: $MISE_STUB_INSTALL_FAIL (python itself),
+# $MISE_STUB_PIP_FAIL (the install), $MISE_STUB_IMPORT_FAIL (installed but not
+# importable), and $MISE_STUB_SIGN_FAIL (signing, in build_context).
+mise_python_stub() {
+  mkdir -p "$TEST_TMP/mise-bin"
+
+  cat > "$TEST_TMP/mise-bin/mise" <<MISE
+#!/bin/bash
+printf 'mise\t%s\tMISE_PYTHON_COMPILE=%s\n' "\$*" "\$MISE_PYTHON_COMPILE" >> "\$BB_CALLS"
+case " \$* " in
+  *" --version "*)
+    if [[ -n "\$MISE_STUB_INSTALL_FAIL" ]]; then
+      echo "mise ERROR Python installation is missing a lib directory" >&2
+      exit 1
+    fi
+    echo "Python 3.12.15" ;;
+  *" -c "*)
+    if [[ -n "\$MISE_STUB_IMPORT_FAIL" ]]; then
+      echo "ImportError: libssl.so.3: cannot open shared object file" >&2
+      exit 1
+    fi
+    [[ -f "$TEST_TMP/mise-crypto" ]] ;;
+  *" pip install "*)
+    [[ -z "\$MISE_STUB_PIP_FAIL" ]] && touch "$TEST_TMP/mise-crypto" ;;
+  *)
+    if [[ -n "\$MISE_STUB_SIGN_FAIL" ]]; then
+      echo "ERROR: GITHUB_PRIVATE_KEY is not a valid private key" >&2
+      exit 1
+    fi
+    echo "header.payload.signature" ;;
+esac
+MISE
+  chmod +x "$TEST_TMP/mise-bin/mise"
+
+  # shellcheck disable=SC2031 # the PATH here is the caller's, not run_resolve_python's subshell
+  export PATH="$TEST_TMP/mise-bin:$PATH"
+}
+
 # gh_install_sandbox -- a PATH we fully control, for the install_gh cases.
 #
 # Two reasons it is this elaborate. The runner's own gh (GitHub Actions ships one)

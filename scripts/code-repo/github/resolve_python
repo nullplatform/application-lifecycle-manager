@@ -1,0 +1,82 @@
+#!/bin/bash
+#
+# Leaves in PYTHON (an array) a python that can sign the GitHub App JWT. openssl is
+# not an option: the agent image ships no openssl binary, and neither mise nor the
+# image's apk index provides one.
+#
+# The python3 on PATH wins when it can import what sign_app_jwt.py needs (see
+# py_probe) -- the aws variants of the agent image carry it, as dependencies of
+# aws-cli. Otherwise mise installs one, the only route on the default and nonroot
+# images, which ship no python.
+#
+# Two settings keep mise working on the agent image, which is Alpine (musl):
+# - MISE_PYTHON_COMPILE=0: without it mise compiles python, and the image has no
+#   toolchain. It rides on the command (`env ...`) rather than being exported: an
+#   export would reach every later step, client hooks included.
+# - python@3.12: 3.13+ resolves to a freethreaded musl build that mise fails to
+#   install ("Python installation is missing a lib directory"). Re-check before
+#   raising the pin.
+#
+# cryptography is pinned: pip fetches it from PyPI at run time, outside any image
+# scan.
+#
+# Each stage -- mise installing python, pip installing cryptography, the import
+# after it -- stops with its own message and keeps the tool's stderr. "failed to
+# build the GitHub App JWT" later on would not say which one broke.
+#
+# Sourced, like every step here: `return` to continue, `exit 1` to stop the
+# workflow. PYTHON only reaches the caller because this file is sourced.
+#
+# Overrides: PYTHON_MISE_VERSION, CRYPTOGRAPHY_VERSION.
+
+# What sign_app_jwt.py imports; a bare `import cryptography` can pass on a package
+# too old or too broken to sign.
+py_probe='from cryptography.hazmat.primitives import hashes, serialization; from cryptography.hazmat.primitives.asymmetric import padding'
+
+# py_last_error OUTPUT -- the line worth quoting from a failed probe: a traceback
+# ends with the exception. A python that dies without a word still gets a reason.
+py_last_error() {
+  local last="${1##*$'\n'}"
+  printf '%s' "${last:-exited non-zero with no output}"
+}
+
+if command -v python3 >/dev/null 2>&1; then
+  if py_error=$(python3 -c "$py_probe" 2>&1); then
+    PYTHON=(python3)
+    return 0
+  fi
+  py_reason="python3 cannot sign ($(py_last_error "$py_error"))"
+else
+  py_reason="python3 not found"
+fi
+
+if ! command -v mise >/dev/null 2>&1; then
+  echo "ERROR: $py_reason, and mise is not available to install a python that can sign the GitHub App JWT."
+  exit 1
+fi
+
+py_version="${PYTHON_MISE_VERSION:-3.12}"
+py_crypto="cryptography==${CRYPTOGRAPHY_VERSION:-50.0.2}"
+
+echo "$py_reason; using mise's python@$py_version"
+
+PYTHON=(env MISE_PYTHON_COMPILE=0 mise exec "python@$py_version" -- python)
+
+# Installs python on first use. Kept apart from the probe so a failed install is
+# reported as one, with mise's own output.
+if ! "${PYTHON[@]}" --version >/dev/null; then
+  echo "ERROR: mise could not provide python@$py_version (see its output above)."
+  exit 1
+fi
+
+if ! "${PYTHON[@]}" -c "$py_probe" >/dev/null 2>&1; then
+  if ! "${PYTHON[@]}" -m pip install --quiet --disable-pip-version-check "$py_crypto"; then
+    echo "ERROR: pip could not install $py_crypto into mise's python@$py_version (see its output above)."
+    exit 1
+  fi
+
+  if ! py_error=$("${PYTHON[@]}" -c "$py_probe" 2>&1); then
+    echo "ERROR: $py_crypto installed but cannot be imported: $(py_last_error "$py_error")"
+    exit 1
+  fi
+fi
