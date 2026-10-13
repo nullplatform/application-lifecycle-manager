@@ -218,6 +218,45 @@ capture_code_repo_export() {
   )
 }
 
+# run_resolve_python [PATH] -> STEP_OUTPUT, STEP_STATUS, RESOLVED_PYTHON
+#
+# resolve_python leaves an ARRAY in the caller's shell, which neither helper above
+# can hand back. The step prints it after sourcing, on a marked line of its own,
+# joined by spaces. PATH, when given, applies to the step only: the parsing below
+# still needs sed and grep.
+run_resolve_python() {
+  local __lib_out
+
+  # shellcheck disable=SC1091
+  __lib_out=$(if [[ -n "${1:-}" ]]; then PATH="$1"; fi
+    cd "$REPO_ROOT" && source scripts/code-repo/github/resolve_python 2>&1 &&
+    printf '\n@PYTHON=%s' "${PYTHON[*]}")
+  STEP_STATUS=$?
+  # shellcheck disable=SC2034 # read by the cases
+  RESOLVED_PYTHON=$(printf '%s\n' "$__lib_out" | sed -n 's/^@PYTHON=//p')
+  STEP_OUTPUT=$(printf '%s\n' "$__lib_out" | grep -v '^@PYTHON=')
+}
+
+# mise_python_stub -- a mise whose python starts without `cryptography` and gets it
+# from `pip install`, like a fresh mise python on the agent image. Each call is
+# recorded with the MISE_PYTHON_COMPILE it saw. $MISE_STUB_PIP_FAIL fails the install.
+mise_python_stub() {
+  mkdir -p "$TEST_TMP/mise-bin"
+
+  cat > "$TEST_TMP/mise-bin/mise" <<MISE
+#!/bin/bash
+printf 'mise\t%s\tMISE_PYTHON_COMPILE=%s\n' "\$*" "\$MISE_PYTHON_COMPILE" >> "\$BB_CALLS"
+case " \$* " in
+  *" -c "*)          [[ -f "$TEST_TMP/mise-crypto" ]] ;;
+  *" pip install "*) [[ -z "\$MISE_STUB_PIP_FAIL" ]] && touch "$TEST_TMP/mise-crypto" ;;
+  *)                 echo "header.payload.signature" ;;
+esac
+MISE
+  chmod +x "$TEST_TMP/mise-bin/mise"
+
+  export PATH="$TEST_TMP/mise-bin:$PATH"
+}
+
 # gh_install_sandbox -- a PATH we fully control, for the install_gh cases.
 #
 # Two reasons it is this elaborate. The runner's own gh (GitHub Actions ships one)

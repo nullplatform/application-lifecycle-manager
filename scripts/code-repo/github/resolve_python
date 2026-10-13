@@ -1,0 +1,45 @@
+#!/bin/bash
+#
+# Leaves in PYTHON (an array) a python that can import `cryptography`, for signing
+# the GitHub App JWT. openssl is not an option: the agent image ships no binary,
+# and neither mise nor the image's apk index provides one.
+#
+# The python3 on PATH wins when it already has the package -- the aws variants of
+# the agent image carry both, as dependencies of aws-cli. Otherwise mise installs
+# one, the only route on the default and nonroot images, which ship no python.
+#
+# Two settings keep mise working on the agent image, which is Alpine (musl).
+# MISE_PYTHON_COMPILE=0, because without it mise compiles python and the image has
+# no toolchain. And python@3.12, because 3.13+ resolves to a freethreaded musl
+# build that mise fails to install ("Python installation is missing a lib
+# directory").
+#
+# cryptography is pinned: it comes from PyPI at run time, outside any image scan.
+#
+# Sourced, like every step here: `return` to continue, `exit 1` to stop the
+# workflow. PYTHON only reaches the caller because this file is sourced.
+#
+# Overrides: PYTHON_MISE_VERSION (default 3.12), CRYPTOGRAPHY_VERSION (default
+# 50.0.2).
+
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import cryptography' >/dev/null 2>&1; then
+  PYTHON=(python3)
+  return 0
+fi
+
+if ! command -v mise >/dev/null 2>&1; then
+  echo "ERROR: python3 with the cryptography package is required to sign the GitHub App JWT, and mise is not available to install it."
+  exit 1
+fi
+
+echo "python3 with cryptography not found, using mise's python"
+
+export MISE_PYTHON_COMPILE=0
+PYTHON=(mise exec "python@${PYTHON_MISE_VERSION:-3.12}" -- python)
+
+if ! "${PYTHON[@]}" -c 'import cryptography' >/dev/null 2>&1; then
+  if ! "${PYTHON[@]}" -m pip install --quiet --disable-pip-version-check "cryptography==${CRYPTOGRAPHY_VERSION:-50.0.2}"; then
+    echo "ERROR: could not install python with the cryptography package via mise."
+    exit 1
+  fi
+fi

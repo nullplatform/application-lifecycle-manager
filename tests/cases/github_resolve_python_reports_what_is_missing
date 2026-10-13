@@ -1,0 +1,38 @@
+#!/bin/bash
+# Two ways to end up without a python that can sign, and both must stop the
+# workflow here with a reason. Carrying on fails later with an empty JWT, which
+# says nothing about the missing interpreter.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+failed=0
+
+# Neither python3 nor mise on PATH.
+mkdir -p "$TEST_TMP/empty-bin"
+run_resolve_python "$TEST_TMP/empty-bin"
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: no python and no mise should exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"mise is not available to install it"* ]]; then
+  echo "  FAIL: the missing interpreter was not explained in:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+# mise is there, but cryptography does not install.
+export PYTHON_STUB_NO_CRYPTO=1 MISE_STUB_PIP_FAIL=1
+mise_python_stub
+run_resolve_python
+
+if [[ "$STEP_STATUS" != 1 ]]; then
+  echo "  FAIL: a failed cryptography install should exit 1, got $STEP_STATUS"
+  failed=1
+elif [[ "$STEP_OUTPUT" != *"could not install python with the cryptography package via mise"* ]]; then
+  echo "  FAIL: the failed install was not reported in:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/        /'
+  failed=1
+fi
+
+exit "$failed"

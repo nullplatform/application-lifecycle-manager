@@ -394,8 +394,15 @@ the credentials come from the environment as before.
 person, and needs no manual token rotation — an installation token is minted per run and
 expires on its own. Install the App on your org and grant it repository **administration**,
 **contents**, **secrets**, and **actions** permissions. The agent host must have `curl`, `jq`, and
-`python3` with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI — see
+a python with the `cryptography` package (used to sign the App JWT), plus the `gh` CLI — see
 **Installing `gh`** above for how it gets there when the image does not ship it. GitHub.com only.
+
+**Python for the App JWT.** A `python3` on `PATH` that can import `cryptography` is used as is (the
+`aws` variants of the agent image ship one). Otherwise mise installs `python@3.12` with
+`MISE_PYTHON_COMPILE=0` and `pip` adds a pinned `cryptography`: the default and `nonroot` images
+ship no python. That route needs egress to mise, GitHub releases and PyPI, takes about 110MB in the
+agent's home, and runs again on every new pod. `PYTHON_MISE_VERSION` and `CRYPTOGRAPHY_VERSION`
+override the pins.
 
 ---
 

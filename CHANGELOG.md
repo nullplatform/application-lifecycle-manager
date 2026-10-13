@@ -24,6 +24,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - A template that does not resolve now stops the workflow instead of creating an empty repository.
 - GitHub: `gh` is installed from the release tarball instead of `mise`, whose attestation check
   fails on the nullplatform agent image.
+- GitHub: the App JWT is signed on agent images without python. mise installs `python@3.12` with a
+  pinned `cryptography` when no `python3` on `PATH` can import it.
 - Test helpers `capture_export` and `run_step` no longer collide with variables in the script under test.
 - `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` now overrides the application's template, not only an empty one.
 
