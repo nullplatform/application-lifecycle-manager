@@ -221,9 +221,10 @@ capture_code_repo_export() {
 # run_resolve_python [PATH] -> STEP_OUTPUT, STEP_STATUS, RESOLVED_PYTHON
 #
 # resolve_python leaves an ARRAY in the caller's shell, which neither
-# run_code_repo_step nor capture_code_repo_export can hand back. The step prints it after sourcing, on a marked line of its own,
-# joined by spaces. PATH, when given, applies to the step only: the parsing below
-# still needs sed and grep.
+# run_code_repo_step nor capture_code_repo_export can hand back. This helper
+# sources it in a subshell, prints PYTHON space-joined on a marked `@PYTHON=` line
+# and parses it back out. PATH, when given, REPLACES the step's PATH -- nothing
+# outside it is found -- and only the step's: the parsing still needs sed and grep.
 run_resolve_python() {
   local __lib_out
 
@@ -239,9 +240,11 @@ run_resolve_python() {
 
 # mise_python_stub -- a mise whose python starts without `cryptography` and gets it
 # from `pip install`, like a fresh mise python on the agent image. Each call is
-# recorded with the MISE_PYTHON_COMPILE it saw. Failures, one per stage:
-# $MISE_STUB_INSTALL_FAIL (python itself), $MISE_STUB_PIP_FAIL (the install),
-# $MISE_STUB_IMPORT_FAIL (installed but not importable), $MISE_STUB_SIGN_FAIL.
+# recorded with the MISE_PYTHON_COMPILE it saw. Calls are told apart by argument
+# (` --version `, ` -c `, ` pip install `); anything else is taken as the signing.
+# Failures, one per stage: $MISE_STUB_INSTALL_FAIL (python itself),
+# $MISE_STUB_PIP_FAIL (the install), $MISE_STUB_IMPORT_FAIL (installed but not
+# importable), and $MISE_STUB_SIGN_FAIL (signing, in build_context).
 mise_python_stub() {
   mkdir -p "$TEST_TMP/mise-bin"
 

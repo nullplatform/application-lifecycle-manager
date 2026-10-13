@@ -1,6 +1,7 @@
 #!/bin/bash
 # `python3` stub: stands in for sign_app_jwt.py and for resolve_python's
-# `-c` import probe.
+# `-c` import probe, on the system python3 only -- mise's python is
+# mise_python_stub in tests/lib.sh.
 #
 # The repository's tests deliberately need nothing but bash, curl and jq (see the
 # header of tests/run), and signing a real JWT would pull in the `cryptography`

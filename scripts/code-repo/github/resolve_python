@@ -4,22 +4,25 @@
 # not an option: the agent image ships no openssl binary, and neither mise nor the
 # image's apk index provides one.
 #
-# The python3 on PATH wins when it already has `cryptography` -- the aws variants of
-# the agent image carry both, as dependencies of aws-cli. Otherwise mise installs
-# one, the only route on the default and nonroot images, which ship no python.
+# The python3 on PATH wins when it can import what sign_app_jwt.py needs (see
+# py_probe) -- the aws variants of the agent image carry it, as dependencies of
+# aws-cli. Otherwise mise installs one, the only route on the default and nonroot
+# images, which ship no python.
 #
-# Two settings keep mise working on the agent image, which is Alpine (musl).
-# MISE_PYTHON_COMPILE=0, because without it mise compiles python and the image has
-# no toolchain. And python@3.12, because 3.13+ resolves to a freethreaded musl
-# build that mise fails to install ("Python installation is missing a lib
-# directory"); re-check that before raising the pin. The setting rides on the
-# command rather than being exported: this file is sourced, and an export would
-# reach every later step, client hooks included.
+# Two settings keep mise working on the agent image, which is Alpine (musl):
+# - MISE_PYTHON_COMPILE=0: without it mise compiles python, and the image has no
+#   toolchain. It rides on the command (`env ...`) rather than being exported: an
+#   export would reach every later step, client hooks included.
+# - python@3.12: 3.13+ resolves to a freethreaded musl build that mise fails to
+#   install ("Python installation is missing a lib directory"). Re-check before
+#   raising the pin.
 #
-# cryptography is pinned: it comes from PyPI at run time, outside any image scan.
+# cryptography is pinned: pip fetches it from PyPI at run time, outside any image
+# scan.
 #
-# Every mise and pip failure keeps its stderr, and each stage has its own message:
-# "could not sign" says nothing about whether mise, pip or the import broke.
+# Each stage -- mise installing python, pip installing cryptography, the import
+# after it -- stops with its own message and keeps the tool's stderr. "failed to
+# build the GitHub App JWT" later on would not say which one broke.
 #
 # Sourced, like every step here: `return` to continue, `exit 1` to stop the
 # workflow. PYTHON only reaches the caller because this file is sourced.
