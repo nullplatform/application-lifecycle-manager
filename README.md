@@ -775,26 +775,46 @@ This channel configuration tells the agent:
 By default, application creation logic is handled directly by the nullplatform API using its built-in workflow manager.  
 When you move to this **agent-based strategy**, you must disable the legacy workflow manager so it does not interfere with or duplicate the operations performed by `application-lifecycle-manager`.
 
-You can do this with the nullplatform CLI:
+Skip only the steps `application-lifecycle-manager` takes over. With the nullplatform CLI:
 
 ```bash
 np nrn patch --nrn "<<your-nrn>>" --body '{
    "global.workflowSkipConfig":{
       "createCodeRepository":true,
-      "createImageRepository":true,
-      "setRepositorySecrets":true,
-      "enableContinuousIntegration":true,
       "addMembersCodeRepository":true,
-      "archiveCodeRepository":true,
-      "deleteImageRegistry":true,
-      "createScope":true,
-      "createDeployment":false,
-      "createRepositoryTag":true
+      "setRepositorySecrets":true,
+      "enableContinuousIntegration":true
    }
 }'
 ```
 
-This configuration instructs the nullplatform API to **skip** the built-in workflows for the operations that are now managed by `application-lifecycle-manager`, while leaving others (such as `createDeployment`) unchanged.
+| Key | Taken over by |
+|---|---|
+| `createCodeRepository` | `create_repository` |
+| `addMembersCodeRepository` | `add_collaborators` |
+| `setRepositorySecrets` | `generate_secrets` and `create_secrets` |
+| `enableContinuousIntegration` | `run_first_build` |
+
+**Set `CREATE_CODE_REPOSITORY=true` on the agent.** The code repository step reads this same key
+(see [Toggling repository creation](#toggling-repository-creation)), so without the variable it
+skips too: the application is created with no repository and the hook still reports success.
+
+**The image repository** is taken over only for `docker-server`, the one asset provider this
+repository implements. Check the account's provider:
+
+```bash
+np provider list --categories assets-repository --nrn "<<your-nrn>>" --format json
+```
+
+- `docker-server`: add `"createImageRepository":true` to the patch and set
+  `CREATE_ASSET_REPOSITORY=true` on the agent, for the same reason as above.
+- Anything else: leave the key out, so the platform keeps creating it, and set
+  `CREATE_ASSET_REPOSITORY=false` on the agent. Otherwise the asset step fails on every application.
+
+**Leave every other key alone.** This repository only handles the `application:create` hook, so
+nothing here runs after the application exists. Skipping `archiveCodeRepository`,
+`deleteImageRegistry`, `createRepositoryTag` or `createScope` means nobody performs that step,
+unless something outside this repository does.
 
 ---
 
