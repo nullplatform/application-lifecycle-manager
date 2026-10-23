@@ -1,0 +1,16 @@
+#!/bin/bash
+# Any other AWS error stops the step with AWS's message on stdout, and touches
+# neither describe nor the application.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="payments-api"
+ecr_fixture create-repository 254 '' 'An error occurred (AccessDeniedException) when calling the CreateRepository operation'
+np_patch_responses '0:{}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 1 || exit 1
+assert_contains "AccessDeniedException" || exit 1
+grep -q "describe-repositories" "$BB_CALLS" && { echo "  FAIL: describe was called"; exit 1; }
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: the application was patched"; exit 1; }

@@ -1,0 +1,27 @@
+#!/bin/bash
+# ECR_REGION overrides the platform's setup.region, which overrides AWS_REGION:
+# on EKS AWS_REGION is always injected, so it cannot be the override.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+region_for() {
+  (cd "$REPO_ROOT" && source scripts/asset-repo/ecr/build_context >/dev/null 2>&1 && printf '%s' "$ECR_REGION")
+}
+
+export ASSET_REPOSITORY='{"attributes":{"setup":{"region":"sa-east-1"}}}'
+
+got=$(ECR_REGION="eu-west-1" AWS_REGION="us-east-1" region_for)
+[[ "$got" == "eu-west-1" ]] || { echo "  FAIL: ECR_REGION did not win: $got"; exit 1; }
+
+got=$(ECR_REGION="" AWS_REGION="us-east-1" region_for)
+[[ "$got" == "sa-east-1" ]] || { echo "  FAIL: platform region did not win over AWS_REGION: $got"; exit 1; }
+
+export ASSET_REPOSITORY='{}'
+got=$(ECR_REGION="" AWS_REGION="us-east-1" region_for)
+[[ "$got" == "us-east-1" ]] || { echo "  FAIL: AWS_REGION fallback not used: $got"; exit 1; }
+
+unset ECR_REGION AWS_REGION
+run_script_step asset-repo/ecr/build_context
+assert_status 1 || exit 1
+assert_contains "no region for the ECR asset provider" || exit 1

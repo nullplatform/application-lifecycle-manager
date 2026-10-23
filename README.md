@@ -432,21 +432,32 @@ The asset repository workflow is composed of the following tasks:
 
 #### Using AWS ECR
 
-To use AWS ECR as the asset repository provider, set `ASSET_REPOSITORY_PROVIDER=ecr` in the
-agent environment along with:
+The ECR provider (`ecr`) is picked up from platform settings like any other, or forced with
+`ASSET_REPOSITORY_PROVIDER=ecr` in the agent environment. It reads:
 
 | Variable              | Required | Description                                                       |
 |-----------------------|----------|-------------------------------------------------------------------|
-| `AWS_REGION`          | yes      | Region where the ECR repository is created.                       |
-| `ECR_REPOSITORY_PATH` | no       | Optional prefix prepended to the repository name.                 |
+| `ECR_REGION`          | no       | Region where the ECR repository is created. Overrides the provider's `setup.region`; `AWS_REGION` is used only when neither is set. |
+| `ECR_REPOSITORY_PATH` | no       | Optional prefix prepended to the repository name. Leading and trailing `/` are ignored. |
 | `ECR_USE_NAMESPACE`   | no       | When `true`, joins namespace and application with `/` instead of `-`. |
 
-The generated repository name must satisfy ECR naming rules (lowercase, made up of `[a-z0-9._/-]`, no leading slash). Choose `ECR_REPOSITORY_PATH` and namespace/application slugs accordingly.
+`AWS_REGION` is not the override because on EKS the pod identity webhook always sets it to the
+cluster's region.
+
+The generated name is checked against ECR's naming rules (2-256 characters, lowercase segments of
+`[a-z0-9._-]` separated by `/`) before AWS is called. With the `-` separator two applications can
+map to the same name (namespace `a-b` + application `c`, and namespace `a` + application `b-c`);
+an existing repository is adopted, not recreated, and the step logs a warning when it does.
 
 **Prerequisites:** the agent host must have the `aws` CLI installed and AWS credentials
 available in its environment (for example, via IRSA on EKS). The bound IAM role needs
 `ecr:CreateRepository` and `ecr:DescribeRepositories`. The repository URI and ARN are read
 from the AWS API response and persisted to the application's `settings.asset.ecr`.
+
+Both providers write that location with `np application patch`. The asset workflow runs while
+the application can still be held by its creation hook, so a `403
+ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` is retried (`ASSET_PATCH_ATTEMPTS`, default `6`;
+`ASSET_PATCH_RETRY_DELAY`, default `5` seconds). Any other error fails the step.
 
 ---
 

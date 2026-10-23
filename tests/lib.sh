@@ -437,3 +437,55 @@ wizard_metadata() {
 
   jq -nc --argjson md "$pairs" '{repository_url: null, template_id: 1777342392, metadata: {application: $md}}'
 }
+
+# ecr_fixture OPERATION CODE STDOUT [STDERR] -- what `aws ecr OPERATION` answers.
+ecr_fixture() {
+  local op="$1"
+
+  printf '%s' "$2" > "$BB_FIXTURES/ecr_${op}.code"
+  printf '%s' "$3" > "$BB_FIXTURES/ecr_${op}.stdout"
+  printf '%s' "${4:-}" > "$BB_FIXTURES/ecr_${op}.stderr"
+}
+
+# np_patch_responses CODE:OUTPUT... -- an np stub whose N-th `application patch`
+# exits CODE printing OUTPUT to stderr (stdout on success). Calls past the list
+# repeat the last one; every other np command answers '{}'.
+np_patch_responses() {
+  local i=1 response
+
+  for response in "$@"; do
+    printf '%s' "$response" > "$BB_FIXTURES/np_patch.$i"
+    i=$((i + 1))
+  done
+
+  cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1 $2" != "application patch" ]]; then
+  echo '{}'
+  exit 0
+fi
+n=$(( $(grep -c $'^np\tapplication patch' "$BB_CALLS") ))
+while [[ ! -f "$BB_FIXTURES/np_patch.$n" ]]; do n=$((n - 1)); done
+response=$(cat "$BB_FIXTURES/np_patch.$n")
+code="${response%%:*}"
+if [[ "$code" == 0 ]]; then
+  echo "${response#*:}"
+else
+  echo "${response#*:}" >&2
+fi
+exit "$code"
+STUB
+  chmod +x "$TEST_TMP/np"
+  export PATH="$TEST_TMP:$PATH"
+}
+
+# patch_body -- the --body of the first `np application patch` call.
+patch_body() {
+  grep $'^np\tapplication patch' "$BB_CALLS" | head -1 | sed -e 's/.*--body \(.*\) --format json$/\1/'
+}
+
+# patch_count -- how many `np application patch` calls were made.
+patch_count() {
+  grep -c $'^np\tapplication patch' "$BB_CALLS"
+}

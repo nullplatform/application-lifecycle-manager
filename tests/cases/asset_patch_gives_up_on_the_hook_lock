@@ -1,0 +1,13 @@
+#!/bin/bash
+# The wait for the hook lock is bounded, and the step then fails saying why.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export DOCKER_SERVER_URI="registry.example.com/apps/payments-api" ASSET_PATCH_RETRY_DELAY=0 ASSET_PATCH_ATTEMPTS=3
+np_patch_responses '1:{"code":"ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING"}'
+
+run_script_step asset-repo/docker-server/create_repository
+assert_status 1 || exit 1
+[[ "$(patch_count)" == 3 ]] || { echo "  FAIL: expected 3 attempts, got $(patch_count)"; exit 1; }
+assert_contains "ERROR: failed to update application 42" || exit 1
