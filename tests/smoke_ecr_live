@@ -1,0 +1,117 @@
+#!/bin/bash
+#
+# Live end-to-end verification of the ECR asset provider against a REAL,
+# throwaway AWS account.
+#
+# This is NOT part of `tests/run` and does NOT run in CI: it needs real AWS
+# credentials and it creates a real repository. It is the only thing that proves
+# the AWS contracts the provider is built on: create-repository answers with
+# repositoryUri/repositoryArn, a second create fails with
+# RepositoryAlreadyExistsException on stderr, and describe-repositories returns
+# the same repository -- with the identity the agent would use.
+#
+# The credentials are whatever the aws CLI resolves (profile, SSO, IRSA), the
+# same ambient lookup the agent does. That identity needs ecr:CreateRepository,
+# ecr:DescribeRepositories and, for the cleanup only, ecr:DeleteRepository.
+#
+#   AWS_PROFILE=sandbox ECR_REGION=us-east-1 tests/smoke_ecr_live
+#
+# `np` is stubbed: no application stands behind the run. The body the step would
+# PATCH is checked against what AWS reports instead. KEEP=1 skips the cleanup.
+
+cd "$(dirname "$0")/.." || exit 1
+
+if [[ -z "${ECR_REGION:-}${AWS_REGION:-}" ]]; then
+  echo "Set ECR_REGION (or AWS_REGION) to the region to test in."
+  exit 1
+fi
+
+if ! CALLER=$(aws sts get-caller-identity --query Arn --output text 2>&1); then
+  echo "No AWS credentials: $CALLER"
+  exit 1
+fi
+
+SMOKE_TMP=$(mktemp -d)
+
+# Stand in for the parts of the workflow context that create_asset_repository and
+# base_context would normally provide.
+export ASSET_REPOSITORY='{"attributes":{"setup":{}}}'
+export NAMESPACE_SLUG="np-smoke"
+export APPLICATION_SLUG="${SMOKE_SLUG:-app-$(date +%s)}"
+export ECR_REPOSITORY_PATH="${ECR_REPOSITORY_PATH:-alm-smoke}"
+export APPLICATION_ID="0"
+
+cat > "$SMOKE_TMP/np" <<STUB
+#!/bin/bash
+printf '%s\n' "\$*" >> "$SMOKE_TMP/np_calls"
+echo '{}'
+STUB
+chmod +x "$SMOKE_TMP/np"
+export PATH="$SMOKE_TMP:$PATH"
+
+cleanup() {
+  if [[ -n "${ECR_REPOSITORY_NAME:-}" && -z "${KEEP:-}" ]]; then
+    echo ""
+    echo "--- cleanup ---"
+    if aws ecr delete-repository --repository-name "$ECR_REPOSITORY_NAME" --region "$ECR_REGION" --force >/dev/null; then
+      echo "deleted $ECR_REPOSITORY_NAME"
+    else
+      echo "WARNING: could not delete $ECR_REPOSITORY_NAME in $ECR_REGION, remove it by hand"
+    fi
+  elif [[ -n "${KEEP:-}" ]]; then
+    echo "KEEP set -- leaving ${ECR_REPOSITORY_NAME:-the repository} in place."
+  fi
+
+  rm -rf "$SMOKE_TMP"
+}
+trap cleanup EXIT
+
+echo "=== smoke: ECR as $CALLER ==="
+
+# Each step is sourced, exactly as the workflow engine does it. A step that
+# fails calls `exit 1`, which ends this script too -- which is the point.
+for step in build_context generate_repository_uri create_repository; do
+  echo ""
+  echo "--- $step ---"
+
+  # shellcheck disable=SC1090
+  source "scripts/asset-repo/ecr/$step"
+done
+
+echo ""
+echo "--- assertions ---"
+
+patched_body() {
+  sed -n 's/.*--body \(.*\) --format json$/\1/p' "$SMOKE_TMP/np_calls" | tail -1
+}
+
+ACTUAL=$(aws ecr describe-repositories --repository-names "$ECR_REPOSITORY_NAME" \
+  --region "$ECR_REGION" --output json | jq -c '.repositories[0] | {uri: .repositoryUri, arn: .repositoryArn}')
+PATCHED=$(patched_body | jq -c '.settings.asset.ecr')
+
+if [[ "$PATCHED" != "$ACTUAL" ]]; then
+  echo "FAIL: the patched location does not match the repository AWS reports."
+  echo "  patched: $PATCHED"
+  echo "  aws:     $ACTUAL"
+  exit 1
+fi
+
+echo "ok  created, and the patch carries AWS's own URI and ARN: $PATCHED"
+
+# A rerun must find the repository, adopt it and store the same location.
+: > "$SMOKE_TMP/np_calls"
+
+echo ""
+echo "--- create_repository (again) ---"
+
+# shellcheck disable=SC1091
+source scripts/asset-repo/ecr/create_repository
+
+if [[ "$(patched_body | jq -c '.settings.asset.ecr')" != "$ACTUAL" ]]; then
+  echo "FAIL: the rerun stored a different location: $(patched_body)"
+  exit 1
+fi
+
+echo "ok  rerun adopted the existing repository through RepositoryAlreadyExistsException"
+echo ""
+echo "=== smoke passed (as $CALLER) ==="
