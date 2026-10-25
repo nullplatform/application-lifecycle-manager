@@ -16,7 +16,6 @@ module "code_repository" {
 
   git_provider = "bitbucket"
   nrn          = var.nrn
-  dimensions   = var.dimensions
 
   bitbucket_workspace        = var.bitbucket_workspace
   bitbucket_project_key      = var.bitbucket_project_key
