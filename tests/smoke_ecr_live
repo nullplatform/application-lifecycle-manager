@@ -12,7 +12,8 @@
 #
 # The credentials are whatever the aws CLI resolves (profile, SSO, IRSA), the
 # same ambient lookup the agent does. That identity needs ecr:CreateRepository,
-# ecr:DescribeRepositories and, for the cleanup only, ecr:DeleteRepository.
+# ecr:TagResource, ecr:DescribeRepositories, ecr:ListTagsForResource and, for
+# the cleanup only, ecr:DeleteRepository.
 #
 #   AWS_PROFILE=sandbox ECR_REGION=us-east-1 tests/smoke_ecr_live
 #
@@ -98,6 +99,16 @@ fi
 
 echo "ok  created, and the patch carries AWS's own URI and ARN: $PATCHED"
 
+OWNER=$(aws ecr list-tags-for-resource --resource-arn "$(jq -r .arn <<<"$ACTUAL")" --region "$ECR_REGION" \
+  --output json | jq -r '.tags[] | select(.Key == "nullplatform:application_id") | .Value')
+
+if [[ "$OWNER" != "$APPLICATION_ID" ]]; then
+  echo "FAIL: the repository is not tagged with its application (got '$OWNER')."
+  exit 1
+fi
+
+echo "ok  tagged nullplatform:application_id=$APPLICATION_ID"
+
 # A rerun must find the repository, adopt it and store the same location.
 : > "$SMOKE_TMP/np_calls"
 
@@ -112,6 +123,5 @@ if [[ "$(patched_body | jq -c '.settings.asset.ecr')" != "$ACTUAL" ]]; then
   exit 1
 fi
 
-echo "ok  rerun adopted the existing repository through RepositoryAlreadyExistsException"
+echo "ok  rerun reused its own repository through RepositoryAlreadyExistsException"
 echo ""
-echo "=== smoke passed (as $CALLER) ==="

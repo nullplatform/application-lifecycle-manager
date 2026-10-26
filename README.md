@@ -425,10 +425,14 @@ You must configure your asset repository provider through **nullplatform platfor
 The asset repository workflow is composed of the following tasks:
 
 - **Build context**  
-  Fetches all necessary credentials and configuration for the target asset registry.
+  Resolves the provider's configuration (registry URI for Docker Server; region, path and naming for ECR).
+
+- **Generate repository URI**  
+  Derives the repository name from the namespace and application slugs.
 
 - **Create repository**  
-  Creates a namespace/folder in your Docker registry for the new application and stores its location in the nullplatform API.
+  Creates the repository (a path in the Docker registry, or an ECR repository) and stores its location
+  on the application.
 
 #### Using AWS ECR
 
@@ -439,20 +443,33 @@ The ECR provider (`ecr`) is picked up from platform settings like any other, or 
 |-----------------------|----------|-------------------------------------------------------------------|
 | `ECR_REGION`          | no       | Region where the ECR repository is created. Overrides the provider's `setup.region`; `AWS_REGION` is used only when neither is set. |
 | `ECR_REPOSITORY_PATH` | no       | Optional prefix prepended to the repository name. Leading and trailing `/` are ignored. |
-| `ECR_USE_NAMESPACE`   | no       | When `true`, joins namespace and application with `/` instead of `-`. |
+| `ECR_USE_NAMESPACE`   | no       | When exactly `true`, joins namespace and application with `/`; anything else (default) uses `-`. |
+| `ECR_ADOPT_UNTAGGED`  | no       | When exactly `true`, adopts an existing repository that has no owner tag. Default: the step fails. |
 
 `AWS_REGION` is not the override because on EKS the pod identity webhook always sets it to the
 cluster's region.
 
 The generated name is checked against ECR's naming rules (2-256 characters, lowercase segments of
 `[a-z0-9._-]` separated by `/`) before AWS is called. With the `-` separator two applications can
-map to the same name (namespace `a-b` + application `c`, and namespace `a` + application `b-c`);
-an existing repository is adopted, not recreated, and the step logs a warning when it does.
+map to the same name (namespace `a-b` + application `c`, and namespace `a` + application `b-c`).
 
-**Prerequisites:** the agent host must have the `aws` CLI installed and AWS credentials
-available in its environment (for example, via IRSA on EKS). The bound IAM role needs
-`ecr:CreateRepository` and `ecr:DescribeRepositories`. The repository URI and ARN are read
-from the AWS API response and persisted to the application's `settings.asset.ecr`.
+Each repository is created with the tag `nullplatform:application_id=<application id>`. When the name
+already exists, the step reads that tag:
+
+- **Same application** (a rerun): the repository is reused.
+- **Another application**: the step fails and names the owner. Give this application its own name
+  with `ECR_REPOSITORY_PATH` or `ECR_USE_NAMESPACE=true`.
+- **No tag** (created by hand, or before this provider): the step fails, unless
+  `ECR_ADOPT_UNTAGGED=true`, which adopts it with a warning. Tagging the repository with this
+  application's id has the same effect for that one repository.
+
+**Prerequisites:** the agent host must have the `aws` CLI and `jq` installed, and AWS credentials
+available in its environment (for example, via IRSA on EKS). The provider uses those ambient
+credentials as they are: the platform provider's `role_arn` and `external_id` are not read, and no role
+is assumed. The bound IAM role needs `ecr:CreateRepository` and `ecr:TagResource` (the owner tag is set
+on create), plus `ecr:DescribeRepositories` and `ecr:ListTagsForResource` when the repository already
+exists. The repository URI and ARN are read from the AWS API response and stored on the application
+as `settings.asset.ecr.uri` and `settings.asset.ecr.arn`.
 
 Both providers write that location with `np application patch`. The asset workflow runs while
 the application can still be held by its creation hook, so a `403

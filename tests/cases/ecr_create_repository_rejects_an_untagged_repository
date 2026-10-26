@@ -1,0 +1,17 @@
+#!/bin/bash
+# A repository without the owner tag was not created by this provider, so its
+# owner is unknown and it is not adopted by default.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="a-b-c"
+ecr_fixture create-repository 254 '' 'An error occurred (RepositoryAlreadyExistsException) when calling the CreateRepository operation'
+ecr_fixture describe-repositories 0 '{"repositories":[{"repositoryUri":"123.dkr.ecr.us-east-1.amazonaws.com/a-b-c","repositoryArn":"arn:aws:ecr:us-east-1:123:repository/a-b-c"}]}'
+np_patch_responses '0:{}'
+ecr_fixture list-tags-for-resource 0 '{"tags":[]}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 1 || exit 1
+assert_contains "has no nullplatform:application_id tag" || exit 1
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: an untagged repository was adopted"; exit 1; }

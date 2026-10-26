@@ -20,7 +20,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build.
 - Test suite for the GitHub code repository provider.
 - AWS ECR asset repository provider (`ecr`), with its region taken from the provider's
-  `setup.region` (`ECR_REGION` overrides it).
+  `setup.region` (`ECR_REGION` overrides it). Repositories are tagged with their application, and an
+  existing one is reused only by that application (`ECR_ADOPT_UNTAGGED=true` adopts untagged ones).
 - Test suite for the asset repository providers.
 
 ### Changed
