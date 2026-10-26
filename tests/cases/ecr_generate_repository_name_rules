@@ -11,6 +11,8 @@ name_for() {
 
 export NAMESPACE_SLUG="payments" APPLICATION_SLUG="api"
 
+# SC2031: each check runs with its own prefix assignments, and name_for's subshell is meant to.
+# shellcheck disable=SC2031
 check() {
   local expected="$1" got
   got=$(name_for)
@@ -22,6 +24,7 @@ ECR_REPOSITORY_PATH="" ECR_USE_NAMESPACE="true" check "payments/api"
 ECR_REPOSITORY_PATH="team" ECR_USE_NAMESPACE="" check "team/payments-api"
 ECR_REPOSITORY_PATH="/team/" ECR_USE_NAMESPACE="true" check "team/payments/api"
 
+# shellcheck disable=SC2031
 export ECR_REPOSITORY_PATH="Team" ECR_USE_NAMESPACE=""
 run_script_step asset-repo/ecr/generate_repository_uri
 assert_status 1 || exit 1
