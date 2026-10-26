@@ -1,0 +1,96 @@
+#!/bin/bash
+
+ECR_ASSUME_ROLE_SELECTOR="ASSET_PROVIDER_ECR"
+ECR_ROLE_ARN_PATTERN='^arn:aws(-cn|-us-gov)?:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$'
+
+ecr_role_from_iam_provider() {
+  local err_file providers status np_error
+
+  err_file=$(mktemp)
+  providers=$(np provider list --categories identity-access-control --nrn "$NRN" --format json 2>"$err_file")
+  status=$?
+  np_error=$(cat "$err_file")
+  rm -f "$err_file"
+
+  if [[ $status -ne 0 ]]; then
+    echo "ERROR: could not read the identity-access-control provider for $NRN: $np_error"
+    return 1
+  fi
+
+  if ! ECR_RESOLVED_ROLE_ARN=$(printf '%s' "$providers" | jq -r --arg selector "$ECR_ASSUME_ROLE_SELECTOR" \
+    '[.results[0].attributes.iam_role_arns.arns[]? | select(.selector == $selector) | .arn // empty] | first // empty' 2>/dev/null); then
+    echo "ERROR: the identity-access-control provider lookup for $NRN did not return JSON: $providers"
+    return 1
+  fi
+}
+
+ecr_resolve_role_arn() {
+  ECR_RESOLVED_ROLE_ARN="${ECR_ASSUME_ROLE_ARN:-}"
+
+  if [[ -n "$ECR_RESOLVED_ROLE_ARN" ]]; then
+    echo "Using ECR_ASSUME_ROLE_ARN from environment: $ECR_RESOLVED_ROLE_ARN"
+    return 0
+  fi
+
+  ecr_role_from_iam_provider || return 1
+
+  if [[ -n "$ECR_RESOLVED_ROLE_ARN" ]]; then
+    echo "Using the $ECR_ASSUME_ROLE_SELECTOR role from the identity-access-control provider: $ECR_RESOLVED_ROLE_ARN"
+    return 0
+  fi
+
+  ECR_RESOLVED_ROLE_ARN="${ECR_ASSUME_ROLE_ARN_DEFAULT:-}"
+
+  if [[ -n "$ECR_RESOLVED_ROLE_ARN" ]]; then
+    echo "No $ECR_ASSUME_ROLE_SELECTOR role in the identity-access-control provider, using ECR_ASSUME_ROLE_ARN_DEFAULT: $ECR_RESOLVED_ROLE_ARN"
+  fi
+}
+
+ecr_assume_role() {
+  local err_file credentials status aws_error access_key secret_key session_token
+
+  if [[ ! "$ECR_RESOLVED_ROLE_ARN" =~ $ECR_ROLE_ARN_PATTERN ]]; then
+    echo "ERROR: '$ECR_RESOLVED_ROLE_ARN' is not an IAM role ARN (arn:aws:iam::<account>:role/<name>)."
+    return 1
+  fi
+
+  err_file=$(mktemp)
+  credentials=$(aws sts assume-role \
+    --role-arn="$ECR_RESOLVED_ROLE_ARN" \
+    --role-session-name "np-asset-ecr-${APPLICATION_ID:-workflow}" \
+    --region "$ECR_REGION" \
+    --output json 2>"$err_file")
+  status=$?
+  aws_error=$(cat "$err_file")
+  rm -f "$err_file"
+
+  if [[ $status -ne 0 ]]; then
+    echo "ERROR: could not assume $ECR_RESOLVED_ROLE_ARN for the ECR asset provider: $aws_error"
+    return 1
+  fi
+
+  access_key=$(printf '%s' "$credentials" | jq -r '.Credentials.AccessKeyId // empty' 2>/dev/null)
+  secret_key=$(printf '%s' "$credentials" | jq -r '.Credentials.SecretAccessKey // empty' 2>/dev/null)
+  session_token=$(printf '%s' "$credentials" | jq -r '.Credentials.SessionToken // empty' 2>/dev/null)
+
+  if [[ -z "$access_key" || -z "$secret_key" || -z "$session_token" ]]; then
+    echo "ERROR: sts:AssumeRole returned incomplete credentials for $ECR_RESOLVED_ROLE_ARN"
+    return 1
+  fi
+
+  export AWS_ACCESS_KEY_ID="$access_key"
+  export AWS_SECRET_ACCESS_KEY="$secret_key"
+  export AWS_SESSION_TOKEN="$session_token"
+
+  echo "Assumed $ECR_RESOLVED_ROLE_ARN for the ECR asset provider"
+}
+
+if ! ecr_resolve_role_arn; then
+  exit 1
+fi
+
+if [[ -z "$ECR_RESOLVED_ROLE_ARN" ]]; then
+  echo "No role configured for $ECR_ASSUME_ROLE_SELECTOR, using the agent's AWS credentials"
+elif ! ecr_assume_role; then
+  exit 1
+fi

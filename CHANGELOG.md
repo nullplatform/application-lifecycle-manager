@@ -23,6 +23,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   `setup.region` (`ECR_REGION` overrides it). Repositories are tagged with their application, and an
   existing one is reused only by that application (`ECR_ADOPT_UNTAGGED=true` adopts untagged ones).
 - Test suite for the asset repository providers.
+- ECR: the provider assumes the `ASSET_PROVIDER_ECR` role of the `identity-access-control` provider (`ECR_ASSUME_ROLE_ARN` overrides it).
 
 ### Changed
 - Docker server: the repository URI is now stored in the application's `settings.asset.docker_server.uri`.

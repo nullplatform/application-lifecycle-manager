@@ -1,0 +1,17 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export NRN="organization=1:account=2:namespace=3:application=42"
+export ECR_REGION="us-east-1" ASSET_REPOSITORY='{}'
+np_iam_provider '[{"selector":"ASSET_PROVIDER_ECR","arn":"arn:aws:iam::123456789012:role/ecr-writer"}]'
+
+AWS_STUB_STS_FAIL=1 run_script_step asset-repo/ecr/build_context
+assert_status 1 || exit 1
+assert_contains "ERROR: could not assume arn:aws:iam::123456789012:role/ecr-writer" || exit 1
+assert_contains "not authorized to perform sts:AssumeRole" || exit 1
+
+AWS_STUB_STS_BODY='{"Credentials":{"AccessKeyId":"ASIASTUBKEY"}}' run_script_step asset-repo/ecr/build_context
+assert_status 1 || exit 1
+assert_contains "incomplete credentials for arn:aws:iam::123456789012:role/ecr-writer" || exit 1

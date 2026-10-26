@@ -464,12 +464,42 @@ already exists, the step reads that tag:
   application's id has the same effect for that one repository.
 
 **Prerequisites:** the agent host must have the `aws` CLI and `jq` installed, and AWS credentials
-available in its environment (for example, via IRSA on EKS). The provider uses those ambient
-credentials as they are: the platform provider's `role_arn` and `external_id` are not read, and no role
-is assumed. The bound IAM role needs `ecr:CreateRepository` and `ecr:TagResource` (the owner tag is set
-on create), plus `ecr:DescribeRepositories` and `ecr:ListTagsForResource` when the repository already
-exists. The repository URI and ARN are read from the AWS API response and stored on the application
-as `settings.asset.ecr.uri` and `settings.asset.ecr.arn`.
+available in its environment (for example, via IRSA on EKS). The platform provider's `role_arn` and
+`external_id` are not read; a role is assumed only as described in
+[Assuming a role for ECR](#assuming-a-role-for-ecr). The role that calls ECR needs
+`ecr:CreateRepository` and `ecr:TagResource` (the owner tag is set on create), plus
+`ecr:DescribeRepositories` and `ecr:ListTagsForResource` when the repository already exists. The
+repository URI and ARN are read from the AWS API response and stored on the application as
+`settings.asset.ecr.uri` and `settings.asset.ecr.arn`.
+
+##### Assuming a role for ECR
+
+Before calling ECR, the provider assumes an IAM role when one is configured, taken from the
+first of:
+
+1. `ECR_ASSUME_ROLE_ARN` in the agent environment.
+2. The `ASSET_PROVIDER_ECR` selector of the application's `identity-access-control` provider
+   (`iam_role_arns.arns[]`).
+3. `ECR_ASSUME_ROLE_ARN_DEFAULT` in the agent environment.
+
+When none is set, the agent's own credentials are used. The agent's role needs `sts:AssumeRole`
+on the target role, and the target role must trust it. Scope that permission to the role ARNs you
+configure rather than `arn:aws:iam::*:role/*`: anyone who can edit the identity-access-control
+provider chooses which role the agent assumes. A failed provider lookup, a value that is not an
+IAM role ARN, or a failed assume stops the workflow.
+
+```hcl
+module "identity_access_control" {
+  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/identity-access-control"
+
+  nrn = var.nrn
+  attributes = {
+    iam_role_arns = {
+      arns = [{ selector = "ASSET_PROVIDER_ECR", arn = "arn:aws:iam::123456789012:role/nullplatform-ecr" }]
+    }
+  }
+}
+```
 
 Both providers write that location with `np application patch`. The asset workflow runs while
 the application can still be held by its creation hook, so a `403

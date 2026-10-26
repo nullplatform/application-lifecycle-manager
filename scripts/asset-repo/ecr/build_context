@@ -20,6 +20,9 @@ if [[ -z "$ECR_REGION" ]]; then
   exit 1
 fi
 
+# shellcheck source=scripts/asset-repo/ecr/assume_role
+source "$(dirname "${BASH_SOURCE[0]}")/assume_role"
+
 export ECR_REGION
 export ECR_REPOSITORY_PATH
 export ECR_USE_NAMESPACE

@@ -30,6 +30,9 @@ setup() {
   export REPOSITORY_SLUG="my-service"
   export REPOSITORY_NAME="my-service"
   export APPLICATION_ID="42"
+
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE \
+    ECR_ASSUME_ROLE_ARN ECR_ASSUME_ROLE_ARN_DEFAULT
 }
 
 teardown() {
@@ -488,4 +491,39 @@ patch_body() {
 # patch_count -- how many `np application patch` calls were made.
 patch_count() {
   grep -c $'^np\tapplication patch' "$BB_CALLS"
+}
+
+np_iam_provider() {
+  printf '%s' "$1" > "$BB_FIXTURES/iam_arns.json"
+
+  cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1 $2" == "provider list" && "$*" == *"--categories identity-access-control"* ]]; then
+  if [[ -n "$NP_STUB_IAM_FAIL" ]]; then
+    echo "Error: 503 Service Unavailable" >&2
+    exit 1
+  fi
+  if [[ -n "$NP_STUB_IAM_STDERR" ]]; then
+    echo "$NP_STUB_IAM_STDERR" >&2
+  fi
+  if [[ -n "$NP_STUB_IAM_BODY" ]]; then
+    printf "%s\n" "$NP_STUB_IAM_BODY"
+    exit 0
+  fi
+  jq -n --slurpfile arns "$BB_FIXTURES/iam_arns.json" '{results: [{attributes: {iam_role_arns: {arns: $arns[0]}}}]}'
+  exit 0
+fi
+echo '{}'
+STUB
+  chmod +x "$TEST_TMP/np"
+  export PATH="$TEST_TMP:$PATH"
+}
+
+ecr_build_context_credentials() {
+  (
+    cd "$REPO_ROOT" || exit 1
+    source scripts/asset-repo/ecr/build_context >/dev/null 2>&1 || exit $?
+    printf '%s\n%s\n%s\n' "${AWS_ACCESS_KEY_ID:-}" "${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}"
+  )
 }

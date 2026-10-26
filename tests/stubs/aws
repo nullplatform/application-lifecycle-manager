@@ -27,6 +27,17 @@ if [[ "$1" == "ecr" ]]; then
   exit "$(cat "$BB_FIXTURES/ecr_${op}.code")"
 fi
 
+if [[ "$1 $2" == "sts assume-role" ]]; then
+  if [[ -n "$AWS_STUB_STS_FAIL" ]]; then
+    echo "An error occurred (AccessDenied) when calling the AssumeRole operation: not authorized to perform sts:AssumeRole" >&2
+    exit 254
+  fi
+
+  sts_body='{"Credentials":{"AccessKeyId":"ASIASTUBKEY","SecretAccessKey":"stub-secret-key","SessionToken":"stub-session-token","Expiration":"2026-10-26T13:00:00Z"}}'
+  printf '%s\n' "${AWS_STUB_STS_BODY:-$sts_body}"
+  exit 0
+fi
+
 if [[ -n "$AWS_STUB_FAIL" ]]; then
   echo "An error occurred (AccessDeniedException) when calling the GetSecretValue operation" >&2
   exit 255
