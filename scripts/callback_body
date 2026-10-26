@@ -10,11 +10,12 @@
 # the application is still in `pending_hook`: the same PATCH succeeds seconds
 # later, and applies.
 #
-# So this is not the only way to write to the entity, and code that reconciles
-# the application late in the workflow does work. It is the way that does not
-# depend on when a step happens to run, which matters for the steps that run
-# first -- by the time the hook closes, the callback carries the fields and
-# nothing had to race the lock.
+# But the window is not guaranteed to lift. With the code repository step
+# skipped, the asset step runs seconds into the hook, and the lock then held for
+# the whole run: 24 retries over two minutes, all answered 403, and the
+# application failed with its ECR repository already created. So every step that
+# writes to the entity being created goes through here -- by the time the hook
+# closes, the callback carries the fields and nothing had to race the lock.
 #
 # Steps cannot export a value back to entrypoint -- it runs the workflow inside
 # a command substitution -- so they append to $ALM_CALLBACK_BODY_FILE and
@@ -48,6 +49,42 @@ if ! type -t alm_callback_body_set >/dev/null 2>&1; then
 
     if ! mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"; then
       echo "WARNING: could not update the callback body with '$key', leaving it out"
+      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+      return 1
+    fi
+  }
+fi
+
+if ! type -t alm_callback_body_merge >/dev/null 2>&1; then
+  # alm_callback_body_merge JSON_OBJECT
+  #
+  # Deep-merges an object into the callback body, for fields that are not a
+  # top-level string -- the asset location lives under settings.asset. Nested
+  # objects are merged, not replaced, so two steps can each add their own key
+  # under `settings`. A no-op when no file is configured, like
+  # alm_callback_body_set.
+  alm_callback_body_merge() {
+    local object="$1"
+    local current='{}'
+
+    if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+      return 0
+    fi
+
+    if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
+      current=$(cat "$ALM_CALLBACK_BODY_FILE")
+    fi
+
+    if ! printf '%s' "$current" \
+      | jq -c --argjson o "$object" 'if ($o | type) == "object" then . * $o else error("not an object") end' \
+        > "$ALM_CALLBACK_BODY_FILE.tmp" 2>/dev/null; then
+      echo "WARNING: could not merge $object into the callback body, leaving it out"
+      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+      return 1
+    fi
+
+    if ! mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"; then
+      echo "WARNING: could not update the callback body with $object, leaving it out"
       rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
       return 1
     fi

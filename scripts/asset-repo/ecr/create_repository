@@ -91,6 +91,6 @@ BODY=$(jq -nc \
   --arg arn "$ECR_REPOSITORY_ARN" \
   '{settings: {asset: {ecr: {uri: $uri, arn: $arn}}}}')
 
-if ! asset_repo_patch_application "$BODY"; then
+if ! asset_repo_store_location "$BODY"; then
   exit 1
 fi

@@ -14,6 +14,6 @@ BODY=$(jq -nc \
   --arg uri "$DOCKER_SERVER_URI" \
   '{settings: {asset: {docker_server: {uri: $uri}}}}')
 
-if ! asset_repo_patch_application "$BODY"; then
+if ! asset_repo_store_location "$BODY"; then
   exit 1
 fi

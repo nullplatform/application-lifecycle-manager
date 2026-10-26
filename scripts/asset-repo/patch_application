@@ -3,12 +3,47 @@
 # Writes the asset repository's location to the application. Sourced by every
 # asset provider's create_repository step.
 #
-# The asset workflow runs last, while the application can still be held by its
-# creation hook: for a few seconds the PATCH answers 403
-# ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING, and the same PATCH then applies (see
-# scripts/callback_body). That one answer is retried; anything else fails.
+# Inside a creation hook (ALM_CALLBACK_BODY_FILE set by entrypoint) the location
+# goes into the hook's callback_body, and nullplatform applies it when the hook
+# closes. A PATCH from here would race the hook lock: the asset workflow runs
+# while the application is still held, and that lock can last the whole run (see
+# scripts/callback_body).
+#
+# Outside a hook -- the workflow run by hand -- nothing holds the application
+# and the location is written with `np application patch`. A 403
+# ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING is still retried there; anything else
+# fails. entrypoint also uses that PATCH, after closing the hook, when the
+# platform refuses the location in the callback.
 #
 # Sourced, like every other script here: no `set -e`, messages to stdout.
+
+ASSET_REPO_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/callback_body
+source "$ASSET_REPO_DIR/../callback_body"
+
+if ! type -t asset_repo_store_location >/dev/null 2>&1; then
+  # asset_repo_store_location BODY
+  #
+  # BODY is the application fields to write, e.g.
+  # {"settings":{"asset":{"ecr":{"uri":"...","arn":"..."}}}}. Returns non-zero
+  # once it has printed why.
+  asset_repo_store_location() {
+    local body="$1"
+
+    if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+      asset_repo_patch_application "$body"
+      return
+    fi
+
+    if ! alm_callback_body_merge "$body"; then
+      echo "ERROR: could not hand the asset repository location to the creation hook of application $APPLICATION_ID"
+      return 1
+    fi
+
+    echo "Asset repository location added to the callback body; application $APPLICATION_ID gets it when its creation hook closes"
+  }
+fi
 
 if ! type -t asset_repo_patch_application >/dev/null 2>&1; then
   # asset_repo_patch_application BODY

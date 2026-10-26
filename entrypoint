@@ -135,8 +135,37 @@ if [[ ! "$HTTP_CODE" =~ ^2 ]] && jq -e '.callback_body | has("slug")' >/dev/null
       -d "$payload")
 fi
 
+# Same reasoning for the asset repository location, the one nested field the
+# callback carries (settings.asset). If the close is still refused while carrying
+# it, close without it and write it once the hook no longer holds the
+# application: the location arrives late instead of the namespace freezing.
+DEFERRED_SETTINGS=""
+if [[ ! "$HTTP_CODE" =~ ^2 ]] && jq -e '.callback_body | has("settings")' >/dev/null 2>&1 <<< "$payload"; then
+  DEFERRED_SETTINGS=$(jq -c '{settings: .callback_body.settings}' <<< "$payload")
+
+  echo "WARNING: closing the hook with the asset repository location was refused (HTTP $HTTP_CODE). Closing it again without it, and writing it to the application once the hook is closed."
+
+  payload=$(jq -c 'del(.callback_body.settings) | if (.callback_body | length) == 0 then del(.callback_body) else . end' <<< "$payload")
+
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$CALLBACK_URL" \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "$payload")
+fi
+
 if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
     echo "✓ Successfully updated hook (HTTP $HTTP_CODE)"
 else
     echo "✗ Failed to update hook (HTTP $HTTP_CODE)"
+fi
+
+if [[ -n "$DEFERRED_SETTINGS" && "$HTTP_CODE" =~ ^2 ]]; then
+  APPLICATION_ID=$(echo "$NP_ACTION_CONTEXT" | jq -r .notification.nrn | sed -n 's/.*application=\([0-9]*\).*/\1/p')
+
+  # shellcheck source=scripts/asset-repo/patch_application
+  source scripts/asset-repo/patch_application
+
+  if ! asset_repo_patch_application "$DEFERRED_SETTINGS"; then
+    echo "WARNING: application $APPLICATION_ID was created without its asset repository location. Set it by hand: $DEFERRED_SETTINGS"
+  fi
 fi

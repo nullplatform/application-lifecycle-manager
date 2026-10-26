@@ -1,0 +1,25 @@
+#!/bin/bash
+# Inside a creation hook the application is locked, and the lock can last the
+# whole run. The URI and ARN go into the callback body, which entrypoint sends
+# when it closes the hook, and no PATCH is attempted.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="payments-api"
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+echo '{"repository_url":"https://github.com/acme/payments-api"}' > "$ALM_CALLBACK_BODY_FILE"
+
+ecr_fixture create-repository 0 '{"repository":{"repositoryUri":"123.dkr.ecr.us-east-1.amazonaws.com/payments-api","repositoryArn":"arn:aws:ecr:us-east-1:123:repository/payments-api"}}'
+np_patch_responses '1:{"code":"ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING"}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 0 || exit 1
+
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: patched the application while its hook holds it"; cat "$BB_CALLS"; exit 1; }
+
+body=$(cat "$ALM_CALLBACK_BODY_FILE")
+[[ "$(jq -r .settings.asset.ecr.uri <<<"$body")" == "123.dkr.ecr.us-east-1.amazonaws.com/payments-api" ]] || { echo "  FAIL: uri not in the callback body: $body"; exit 1; }
+[[ "$(jq -r .settings.asset.ecr.arn <<<"$body")" == "arn:aws:ecr:us-east-1:123:repository/payments-api" ]] || { echo "  FAIL: arn not in the callback body: $body"; exit 1; }
+[[ "$(jq -r .repository_url <<<"$body")" == "https://github.com/acme/payments-api" ]] || { echo "  FAIL: dropped what an earlier step put in the body: $body"; exit 1; }
+assert_contains "when its creation hook closes" || exit 1

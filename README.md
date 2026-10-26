@@ -316,7 +316,8 @@ every application before the hook ever runs.
 > is a state lock, not a permission problem, and it is narrow: measured against a real hook it lifts
 > while the application is still in `pending_hook`, and the same `PATCH` then succeeds and applies.
 > So the callback is not the only write the platform accepts, it is the one that does not depend on
-> when a step happens to run. Once the repository exists its canonical URL is placed in the
+> when a step happens to run. The window does not always lift, either: see
+> [Creating an asset repository](#creating-an-asset-repository). Once the repository exists its canonical URL is placed in the
 > `callback_body` of the `PATCH` that closes the hook, and nullplatform merges it into the entity as
 > it resumes. A failed hook closes with a status and no `callback_body`, because a run that stopped
 > before creating the repository must not leave the application pointing at something that does not
@@ -501,9 +502,18 @@ module "identity_access_control" {
 }
 ```
 
-Both providers write that location with `np application patch`. The asset workflow runs while
-the application can still be held by its creation hook, so a `403
-ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` is retried (`ASSET_PATCH_ATTEMPTS`, default `6`;
+Inside a creation hook, both providers hand that location to the hook's `callback_body`, and
+nullplatform applies it to the application when the hook closes. A `PATCH` from the step would race
+the hook lock, which can hold for the whole run: with the code repository step skipped, the asset
+step runs seconds into the hook and every `np application update` answers `403
+ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` until the hook closes.
+
+If the platform refuses to close the hook while the callback carries the location, `entrypoint`
+closes it again without it and then writes the location with `np application patch`, so a refusal
+delays the location instead of leaving the hook pending.
+
+Outside a hook (the workflow run by hand) the location is written with `np application patch`, and a
+`403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` is retried (`ASSET_PATCH_ATTEMPTS`, default `6`;
 `ASSET_PATCH_RETRY_DELAY`, default `5` seconds). Any other error fails the step.
 
 ---
