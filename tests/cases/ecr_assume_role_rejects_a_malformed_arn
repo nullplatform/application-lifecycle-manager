@@ -8,7 +8,7 @@ export ECR_REGION="us-east-1" ASSET_REPOSITORY='{}'
 
 for arn in "--profile=admin" "arn:aws:iam::123:role/short-account" "arn:aws:s3:::bucket"; do
   : > "$BB_CALLS"
-  np_iam_provider "$(jq -nc --arg arn "$arn" '[{selector: "ASSET_PROVIDER_ECR", arn: $arn}]')"
+  np_iam_provider "$(jq -nc --arg arn "$arn" '[{selector: "asset_provider_ecr", arn: $arn}]')"
 
   run_script_step asset-repo/ecr/build_context
   assert_status 1 || exit 1

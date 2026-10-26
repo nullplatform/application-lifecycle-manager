@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ECR_ASSUME_ROLE_SELECTOR="ASSET_PROVIDER_ECR"
+ECR_ASSUME_ROLE_SELECTOR="asset_provider_ecr"
 ECR_ROLE_ARN_PATTERN='^arn:aws(-cn|-us-gov)?:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$'
 
 ecr_role_from_iam_provider() {

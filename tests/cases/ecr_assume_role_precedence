@@ -5,7 +5,7 @@ trap teardown EXIT
 
 export NRN="organization=1:account=2:namespace=3:application=42"
 export ECR_REGION="us-east-1" ASSET_REPOSITORY='{}'
-np_iam_provider '[{"selector":"ASSET_PROVIDER_ECR","arn":"arn:aws:iam::123456789012:role/from-provider"}]'
+np_iam_provider '[{"selector":"asset_provider_ecr","arn":"arn:aws:iam::123456789012:role/from-provider"}]'
 
 ECR_ASSUME_ROLE_ARN="arn:aws:iam::123456789012:role/override" ECR_ASSUME_ROLE_ARN_DEFAULT="arn:aws:iam::123456789012:role/default" \
   run_script_step asset-repo/ecr/build_context

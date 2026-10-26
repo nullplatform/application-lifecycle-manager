@@ -5,7 +5,7 @@ trap teardown EXIT
 
 export NRN="organization=1:account=2:namespace=3:application=42"
 export ECR_REGION="us-east-1" ASSET_REPOSITORY='{}'
-np_iam_provider '[{"selector":"ASSET_PROVIDER_ECR","arn":"arn:aws:iam::123456789012:role/ecr-writer"}]'
+np_iam_provider '[{"selector":"asset_provider_ecr","arn":"arn:aws:iam::123456789012:role/ecr-writer"}]'
 
 AWS_STUB_STS_FAIL=1 run_script_step asset-repo/ecr/build_context
 assert_status 1 || exit 1

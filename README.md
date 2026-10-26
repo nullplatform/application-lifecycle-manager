@@ -478,7 +478,7 @@ Before calling ECR, the provider assumes an IAM role when one is configured, tak
 first of:
 
 1. `ECR_ASSUME_ROLE_ARN` in the agent environment.
-2. The `ASSET_PROVIDER_ECR` selector of the application's `identity-access-control` provider
+2. The `asset_provider_ecr` selector of the application's `identity-access-control` provider
    (`iam_role_arns.arns[]`).
 3. `ECR_ASSUME_ROLE_ARN_DEFAULT` in the agent environment.
 
@@ -495,7 +495,7 @@ module "identity_access_control" {
   nrn = var.nrn
   attributes = {
     iam_role_arns = {
-      arns = [{ selector = "ASSET_PROVIDER_ECR", arn = "arn:aws:iam::123456789012:role/nullplatform-ecr" }]
+      arns = [{ selector = "asset_provider_ecr", arn = "arn:aws:iam::123456789012:role/nullplatform-ecr" }]
     }
   }
 }
