@@ -1,0 +1,45 @@
+#!/bin/bash
+# A hook closed with `settings` in its callback_body is accepted, and the
+# application then stays in pending_hook with no error. So entrypoint sets the
+# asset location aside, closes the hook with every other field, and writes the
+# location with a PATCH afterwards, when the hook no longer holds the application.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CALLBACK_URL="https://api.nullplatform.com/entity_hook/abc123"
+
+export NP_API_KEY="test-key"
+export NP_ACTION_CONTEXT="{\"notification\":{\"callback_url\":\"$CALLBACK_URL\",\"nrn\":\"organization=1:account=2:namespace=3:application=4\"}}"
+export ASSET_PATCH_RETRY_DELAY=0
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+echo '{"repository_url":"https://github.com/acme/payments-api","settings":{"asset":{"ecr":{"uri":"u","arn":"a"}}}}' > "$ALM_CALLBACK_BODY_FILE"
+
+fixture PATCH "$CALLBACK_URL" 200 ""
+np_patch_responses '1:{"code":"ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING"}' '0:{}'
+
+output=$(cd "$REPO_ROOT" && bash entrypoint 2>&1)
+
+close=$(request_body PATCH "$CALLBACK_URL")
+if ! printf '%b' "$close" | jq -e '.status == "success" and (.callback_body | has("settings") | not) and .callback_body.repository_url == "https://github.com/acme/payments-api"' >/dev/null 2>&1; then
+  echo "  FAIL: expected the close to carry every field but settings, sent:"
+  printf '%b\n' "$close" | sed 's/^/    /'
+  exit 1
+fi
+
+grep -q $'^np\tapplication patch --id 4 ' "$BB_CALLS" || { echo "  FAIL: the location was not patched after the close"; cat "$BB_CALLS"; exit 1; }
+[[ "$(patch_body | jq -c .)" == '{"settings":{"asset":{"ecr":{"uri":"u","arn":"a"}}}}' ]] || { echo "  FAIL: wrong patch body: $(patch_body)"; exit 1; }
+[[ "$(patch_count)" == 2 ]] || { echo "  FAIL: expected the hook lock to be retried once, got $(patch_count) patches"; exit 1; }
+
+# The close comes first: patching before it is exactly what the lock refuses.
+order=$(grep -n -E $'^(PATCH\t|np\tapplication patch)' "$BB_CALLS" | head -1)
+[[ "$order" == *$'PATCH\t'"$CALLBACK_URL"* ]] || { echo "  FAIL: patched the application before closing the hook:"; cat "$BB_CALLS"; exit 1; }
+[[ "$output" == *"updated with the asset repository location"* ]] || { echo "  FAIL: no confirmation in the output"; exit 1; }
+
+# Only settings in the body: the close then carries no callback_body at all.
+echo '{"settings":{"asset":{"docker_server":{"uri":"r"}}}}' > "$ALM_CALLBACK_BODY_FILE"
+: > "$BB_CALLS"
+(cd "$REPO_ROOT" && bash entrypoint) >/dev/null 2>&1
+close=$(request_body PATCH "$CALLBACK_URL")
+printf '%b' "$close" | jq -e 'has("callback_body") | not' >/dev/null 2>&1 || { echo "  FAIL: sent an empty callback_body:"; printf '%b\n' "$close"; exit 1; }

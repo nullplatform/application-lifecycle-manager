@@ -98,8 +98,20 @@ payload=$(jq -n \
 # Only a successful hook writes to the entity. A failed run may have derived a
 # name without creating the repository, and merging that URL would leave the
 # application pointing at something that does not exist.
+#
+# The asset repository location (settings.asset) is the exception: it is set
+# aside here and written once the hook is closed. A hook closed with `settings`
+# in its callback_body is accepted, and the application then stays in
+# pending_hook with no error, so it never travels in the callback.
+DEFERRED_SETTINGS=""
 if [[ "$STATUS" == "success" && -s "$ALM_CALLBACK_BODY_FILE" ]]; then
   CALLBACK_BODY=$(cat "$ALM_CALLBACK_BODY_FILE")
+
+  if DEFERRED_SETTINGS=$(jq -c 'if has("settings") then {settings: .settings} else empty end' <<< "$CALLBACK_BODY" 2>/dev/null); then
+    CALLBACK_BODY=$(jq -c 'del(.settings)' <<< "$CALLBACK_BODY")
+  else
+    DEFERRED_SETTINGS=""
+  fi
 
   if ! payload=$(jq -c --argjson cb "$CALLBACK_BODY" \
     'if ($cb | length) > 0 then . + {callback_body: $cb} else . end' <<< "$payload"); then
@@ -135,30 +147,16 @@ if [[ ! "$HTTP_CODE" =~ ^2 ]] && jq -e '.callback_body | has("slug")' >/dev/null
       -d "$payload")
 fi
 
-# Same reasoning for the asset repository location, the one nested field the
-# callback carries (settings.asset). If the close is still refused while carrying
-# it, close without it and write it once the hook no longer holds the
-# application: the location arrives late instead of the namespace freezing.
-DEFERRED_SETTINGS=""
-if [[ ! "$HTTP_CODE" =~ ^2 ]] && jq -e '.callback_body | has("settings")' >/dev/null 2>&1 <<< "$payload"; then
-  DEFERRED_SETTINGS=$(jq -c '{settings: .callback_body.settings}' <<< "$payload")
-
-  echo "WARNING: closing the hook with the asset repository location was refused (HTTP $HTTP_CODE). Closing it again without it, and writing it to the application once the hook is closed."
-
-  payload=$(jq -c 'del(.callback_body.settings) | if (.callback_body | length) == 0 then del(.callback_body) else . end' <<< "$payload")
-
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$CALLBACK_URL" \
-      -H "Authorization: Bearer $TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "$payload")
-fi
-
 if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
     echo "✓ Successfully updated hook (HTTP $HTTP_CODE)"
 else
     echo "✗ Failed to update hook (HTTP $HTTP_CODE)"
 fi
 
+# The hook no longer holds the application, so the PATCH that races the lock
+# during the workflow goes through now. It still retries
+# ENTITY_CREATION_HOOK_PENDING, for the moment the platform takes to resume.
+# Nothing to write when the close failed: the hook is still pending.
 if [[ -n "$DEFERRED_SETTINGS" && "$HTTP_CODE" =~ ^2 ]]; then
   APPLICATION_ID=$(echo "$NP_ACTION_CONTEXT" | jq -r .notification.nrn | sed -n 's/.*application=\([0-9]*\).*/\1/p')
 

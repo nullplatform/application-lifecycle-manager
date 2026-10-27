@@ -502,19 +502,23 @@ module "identity_access_control" {
 }
 ```
 
-Inside a creation hook, both providers hand that location to the hook's `callback_body`, and
-nullplatform applies it to the application when the hook closes. A `PATCH` from the step would race
-the hook lock, which can hold for the whole run: with the code repository step skipped, the asset
-step runs seconds into the hook and every `np application update` answers `403
-ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` until the hook closes.
+Inside a creation hook, both providers hand that location to `entrypoint`, which writes it with
+`np application patch` once it has closed the hook. Neither of the two other ways works:
 
-If the platform refuses to close the hook while the callback carries the location, `entrypoint`
-closes it again without it and then writes the location with `np application patch`, so a refusal
-delays the location instead of leaving the hook pending.
+- A `PATCH` from the step races the hook lock, which can hold for the whole run: with the code
+  repository step skipped, the asset step runs seconds into the hook and every `np application
+  update` answers `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` until the hook closes.
+- The hook's `callback_body` does not take it: a hook closed with `settings` in its callback body
+  is accepted, and the application then stays in `pending_hook` with no error. Top-level fields
+  such as `repository_url` are applied normally.
 
-Outside a hook (the workflow run by hand) the location is written with `np application patch`, and a
-`403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` is retried (`ASSET_PATCH_ATTEMPTS`, default `6`;
-`ASSET_PATCH_RETRY_DELAY`, default `5` seconds). Any other error fails the step.
+So the location reaches the application a few seconds after the hook closes, and only when the hook
+closed as `success`. If that `PATCH` fails, the application is created without it and the agent log
+says so, with the body to set by hand; the hook has already reported its status by then.
+
+Both that `PATCH` and the one made outside a hook (the workflow run by hand) retry a `403
+ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` (`ASSET_PATCH_ATTEMPTS`, default `6`;
+`ASSET_PATCH_RETRY_DELAY`, default `5` seconds). Any other error stops the retries.
 
 ---
 

@@ -31,10 +31,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Fixed
 - A template that does not resolve now stops the workflow instead of creating an empty repository.
-- Asset repositories: inside a creation hook the location (`settings.asset.*`) travels in the hook's
-  `callback_body` instead of a `PATCH` that the hook lock could refuse for the whole run, which
-  failed the application after its repository had been created. A close refused while carrying it is
-  retried without it, and the location is then patched once the hook is closed.
+- Asset repositories: inside a creation hook the location (`settings.asset.*`) is written by
+  `entrypoint` with a `PATCH` once it has closed the hook, instead of from the step, where the hook
+  lock could refuse it for the whole run and fail the application after its repository had been
+  created. It does not travel in the hook's `callback_body`: a close carrying `settings` leaves the
+  application in `pending_hook`.
 - GitHub: `gh` is installed from the release tarball instead of `mise`, whose attestation check
   fails on the nullplatform agent image.
 - GitHub: signing the App JWT no longer requires `python3` in the agent image. When no `python3` on

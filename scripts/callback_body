@@ -59,7 +59,8 @@ if ! type -t alm_callback_body_merge >/dev/null 2>&1; then
   # alm_callback_body_merge JSON_OBJECT
   #
   # Deep-merges an object into the callback body, for fields that are not a
-  # top-level string -- the asset location lives under settings.asset. Nested
+  # top-level string -- the asset location lives under settings.asset, which
+  # entrypoint sets aside and patches after the close instead of sending. Nested
   # objects are merged, not replaced, so two steps can each add their own key
   # under `settings`. A no-op when no file is configured, like
   # alm_callback_body_set.

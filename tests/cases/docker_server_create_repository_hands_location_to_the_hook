@@ -1,5 +1,5 @@
 #!/bin/bash
-# Same as ECR: inside a creation hook the URI travels in the callback body.
+# Same as ECR: inside a creation hook the URI goes to the callback body file.
 source "$(dirname "$0")/../lib.sh"
 setup
 trap teardown EXIT
