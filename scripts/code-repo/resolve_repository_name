@@ -56,8 +56,7 @@ fi
 
 # Only a repository being created gets a derived name. An import already has one,
 # and pointing it somewhere else would send it at a repository that does not
-# exist; with APPLICATION_NAME_FROM_REPOSITORY it still derives one, for the
-# application alone.
+# exist.
 #
 # The dispatcher has already settled this, so ask it rather than working it out
 # again from the application: CODE_REPOSITORY_DEFAULT_TEMPLATE_ID is applied

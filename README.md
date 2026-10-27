@@ -307,10 +307,10 @@ Set one or the other, not both: the plain variable wins when it is non-empty.
 
 Two cases deliberately: an application whose strategy resolves to `import` (no `template_id` on the
 application **and** no `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` on the agent), and any deployment with
-no rule set. An import keeps its repository name even with
+no rule set. The signal is the strategy, not the `repository_url` — the console fills that in for
+every application before the hook ever runs. An import keeps its repository name even with
 [`APPLICATION_NAME_FROM_REPOSITORY`](#renaming-the-application-after-its-repository), which then
-renames only the application. The signal is the strategy, not the `repository_url` — the console fills that in for
-every application before the hook ever runs.
+renames only the application.
 
 > **The derived URL travels back in `callback_body`.** An application being created answers
 > `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` to `np application update` for a window at the
