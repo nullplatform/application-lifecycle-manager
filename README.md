@@ -339,7 +339,8 @@ extra_envs = {
 
 - It only applies when a name was derived from the rule, and only lands when the hook succeeds.
 - It also applies to an `import`: the rule renames the application, and the imported repository
-  and its `repository_url` are left as they are.
+  and its `repository_url` are left as they are. A rule that cannot name the application fails the
+  hook, as it does on `create`.
 - `APPLICATION_SLUG` switches to the new slug as soon as the name is derived, so the asset
   repository path, the CI api key's name and the scaffolding script all use it.
 - If the platform refuses the close because of the slug, entrypoint closes the hook again without
