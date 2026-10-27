@@ -36,6 +36,7 @@ jobs:
             scripts/approve_creation \
             scripts/callback_body \
             scripts/cancel \
+            scripts/code-repo/context_path \
             scripts/code-repo/create_code_repository \
             scripts/code-repo/generate_secrets \
             scripts/code-repo/resolve_repository_name \

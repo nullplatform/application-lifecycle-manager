@@ -1,0 +1,50 @@
+#!/bin/bash
+#
+# Reads a dotted path -- `.application.metadata.application.domain`,
+# `.namespace.slug` -- against the workflow's shared $CONTEXT.
+#
+# Shared by every piece of agent configuration that names a field of the hook
+# context: the naming rule (resolve_repository_name) and the import condition
+# (create_code_repository). One parser, so a path that works in one works in the
+# other, and both refuse the same ones.
+#
+# scripts/base_context builds $CONTEXT, and checks it, before any step runs.
+#
+# Sourced, like every other script here: it only defines things.
+
+# A path is a dotted path and nothing else.
+#
+# The same string is handed to jq's test() and to bash's =~. It means the same
+# thing in both: no alternation, no backreference, nothing the two flavours read
+# differently.
+#
+# SC2034: used by the scripts that source this one, which shellcheck checks one
+# file at a time.
+# shellcheck disable=SC2034
+CONTEXT_PATH_RE='^(\.[A-Za-z0-9_-]+)+$'
+
+# context_path_value PATH -- the scalar the context carries at PATH, empty when
+# the path leads nowhere.
+#
+# getpath over a parsed path rather than `jq "$path"`: the path is configuration,
+# and evaluating it as a jq program would make every one of them a place to run
+# arbitrary jq against the hook's context. It also keeps the failure modes down
+# to one -- a path that leads nowhere -- instead of jq syntax errors surfacing
+# mid-hook.
+context_path_value() {
+  jq -r --arg p "$1" '
+    ($p | ltrimstr(".") | split(".")) as $parts
+    | getpath($parts)
+    | if . == null then empty else tostring end
+  ' <<<"$CONTEXT" 2>/dev/null
+}
+
+# context_path_type PATH -- the JSON type at PATH, so a value that cannot be
+# used as a scalar is caught before it is stringified.
+context_path_type() {
+  jq -r --arg p "$1" '
+    ($p | ltrimstr(".") | split(".")) as $parts
+    | getpath($parts)
+    | type
+  ' <<<"$CONTEXT" 2>/dev/null
+}

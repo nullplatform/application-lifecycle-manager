@@ -60,7 +60,8 @@ fi
 #
 # The dispatcher has already settled this, so ask it rather than working it out
 # again from the application: CODE_REPOSITORY_DEFAULT_TEMPLATE_ID is applied
-# there, and it overrides whatever template the application arrived with.
+# there, and it overrides whatever template the application arrived with --
+# unless CODE_REPOSITORY_IMPORT_CONDITION holds, which forces an import.
 #
 # And not by the presence of a repository_url: the console fills that in before
 # the hook runs, defaulting to <namespace-slug>-<application-slug>, so every
@@ -133,34 +134,10 @@ resolve_reject_unusable() {
 # `.application.metadata.application.domain`, `.namespace.slug` -- so a rule can
 # name anything the hook already knows, not just the application's metadata.
 #
-# scripts/base_context builds it, and checks it, before any step runs.
-RESOLVE_CONTEXT="$CONTEXT"
-
-# resolve_path_value PATH -- the scalar the context carries at PATH, empty when
-# the path leads nowhere.
-#
-# getpath over a parsed path rather than `jq "$path"`: the rule is configuration,
-# and evaluating it as a jq program would make every naming rule a place to run
-# arbitrary jq against the hook's context. It also keeps the failure modes down
-# to one -- a path that leads nowhere -- instead of jq syntax errors surfacing
-# mid-hook.
-resolve_path_value() {
-  jq -r --arg p "$1" '
-    ($p | ltrimstr(".") | split(".")) as $parts
-    | getpath($parts)
-    | if . == null then empty else tostring end
-  ' <<<"$RESOLVE_CONTEXT" 2>/dev/null
-}
-
-# resolve_path_type PATH -- the JSON type at PATH, so a value that cannot be a
-# segment is caught before it is stringified.
-resolve_path_type() {
-  jq -r --arg p "$1" '
-    ($p | ltrimstr(".") | split(".")) as $parts
-    | getpath($parts)
-    | type
-  ' <<<"$RESOLVE_CONTEXT" 2>/dev/null
-}
+# The reader and the path syntax live in context_path, shared with the
+# dispatcher's CODE_REPOSITORY_IMPORT_CONDITION.
+# shellcheck source=scripts/code-repo/context_path
+source "$(dirname "${BASH_SOURCE[0]}")/context_path"
 
 # resolve_condition_holds PATH EXPECTED_JSON -- whether the context carries the
 # expected value at PATH.
@@ -178,19 +155,16 @@ resolve_condition_holds() {
       else
         (if $got == null then "" else $got | tostring end) == ($want | tostring)
       end
-  ' >/dev/null <<<"$RESOLVE_CONTEXT" 2>/dev/null
+  ' >/dev/null <<<"$CONTEXT" 2>/dev/null
 }
 
-# A path is a dotted path and nothing else. Held in one variable because both
-# sides need it and they used to disagree: the placeholders were checked against
-# it and the condition keys were not, so `application.metadata.x` -- no leading
-# dot -- worked in a condition and was refused in the pattern. `ltrimstr(".")` is
-# a no-op without the dot and `split(".")` still yields the right parts, which is
-# why the condition side never noticed.
-#
-# The same string is handed to jq's test() below. It means the same thing in both:
-# no alternation, no backreference, nothing the two flavours read differently.
-RESOLVE_PATH_RE='^(\.[A-Za-z0-9_-]+)+$'
+# A path is a dotted path and nothing else, on both sides of the rule. They used
+# to disagree: the placeholders were checked against it and the condition keys
+# were not, so `application.metadata.x` -- no leading dot -- worked in a
+# condition and was refused in the pattern. `ltrimstr(".")` is a no-op without
+# the dot and `split(".")` still yields the right parts, which is why the
+# condition side never noticed.
+RESOLVE_PATH_RE="$CONTEXT_PATH_RE"
 
 # The rule is written by whoever configures the agent, and the developer creating
 # an application cannot see it. So every shape problem in it has to say the rule
@@ -314,7 +288,7 @@ if [[ "$RESOLVE_MATCHED_INDEX" -lt 0 ]]; then
       resolve_expected=$(jq -r --argjson i "$resolve_index" --arg k "$resolve_cond_path" \
         '.branches[$i].condition[$k] | tostring' <<<"$REPOSITORY_NAME_RULE")
 
-      echo "  branch $resolve_index: $resolve_cond_path is '$(resolve_path_value "$resolve_cond_path")', the rule wants '$resolve_expected'"
+      echo "  branch $resolve_index: $resolve_cond_path is '$(context_path_value "$resolve_cond_path")', the rule wants '$resolve_expected'"
     done < <(jq -r --argjson i "$resolve_index" \
       '.branches[$i].condition // {} | keys_unsorted[]' <<<"$REPOSITORY_NAME_RULE")
 
@@ -365,14 +339,14 @@ while [[ "$resolve_rest" == *"{"* ]]; do
   # across several lines, and those newlines used to end up inside the repository
   # name, which the provider then rejects with a message that mentions nothing
   # about the rule.
-  resolve_kind=$(resolve_path_type "$resolve_placeholder")
+  resolve_kind=$(context_path_type "$resolve_placeholder")
 
   if [[ "$resolve_kind" == "array" || "$resolve_kind" == "object" ]]; then
     echo "ERROR: '$resolve_placeholder' holds an $resolve_kind; only a single value can become part of a repository name."
     exit 1
   fi
 
-  resolve_value=$(resolve_path_value "$resolve_placeholder")
+  resolve_value=$(context_path_value "$resolve_placeholder")
   resolve_segment=$(resolve_slug "$resolve_value")
 
   # Absent is what "optional" is about. Present but unusable is a different thing
