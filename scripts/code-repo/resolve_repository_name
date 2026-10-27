@@ -65,8 +65,11 @@ fi
 # And not by the presence of a repository_url: the console fills that in before
 # the hook runs, defaulting to <namespace-slug>-<application-slug>, so every
 # application arrives here already carrying one.
-if [[ "$CODE_REPOSITORY_STRATEGY" != "create" ]]; then
-  RESOLVE_EXISTING_URL=$(jq -r '.repository_url // empty' <<<"$APPLICATION")
+RESOLVE_EXISTING_URL=$(jq -r '.repository_url // empty' <<<"$APPLICATION")
+
+if [[ "$CODE_REPOSITORY_STRATEGY" == "import" && "${APPLICATION_NAME_FROM_REPOSITORY:-}" == "true" ]]; then
+  echo "Strategy is 'import'; keeping the application's repository_url (${RESOLVE_EXISTING_URL:-unknown}) and deriving a name only to rename the application"
+elif [[ "$CODE_REPOSITORY_STRATEGY" != "create" ]]; then
   echo "Strategy is '${CODE_REPOSITORY_STRATEGY:-unset}', not 'create'; keeping the application's repository_url (${RESOLVE_EXISTING_URL:-unknown}) instead of deriving a name"
   return 0
 fi
@@ -419,16 +422,18 @@ if [[ "${#RESOLVE_NAME}" -gt 100 ]]; then
   exit 1
 fi
 
-echo "Derived repository name: $RESOLVE_NAME"
+echo "Derived name: $RESOLVE_NAME"
 
-REPOSITORY_NAME="$RESOLVE_NAME"
+if [[ "$CODE_REPOSITORY_STRATEGY" == "create" ]]; then
+  REPOSITORY_NAME="$RESOLVE_NAME"
 
-# Tells create_repository that the application does not know this URL yet, so it
-# has to travel back through the hook's callback_body.
-REPOSITORY_NAME_DERIVED="true"
+  # Tells create_repository that the application does not know this URL yet, so it
+  # has to travel back through the hook's callback_body.
+  REPOSITORY_NAME_DERIVED="true"
 
-export REPOSITORY_NAME
-export REPOSITORY_NAME_DERIVED
+  export REPOSITORY_NAME
+  export REPOSITORY_NAME_DERIVED
+fi
 
 # Opt-in: the application takes the repository's name as its name AND its slug,
 # so whatever was typed in the console's Name field does not outlive the hook.
@@ -459,5 +464,5 @@ if [[ "${APPLICATION_NAME_FROM_REPOSITORY:-}" == "true" ]]; then
   APPLICATION_SLUG="$RESOLVE_NAME"
   export APPLICATION_SLUG
 
-  echo "Application renamed after its repository: name '${RESOLVE_TYPED_NAME:-?}' and slug '${RESOLVE_TYPED_SLUG:-?}' become '$RESOLVE_NAME'"
+  echo "Application renamed by the naming rule: name '${RESOLVE_TYPED_NAME:-?}' and slug '${RESOLVE_TYPED_SLUG:-?}' become '$RESOLVE_NAME'"
 fi

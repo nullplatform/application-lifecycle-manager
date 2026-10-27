@@ -1,0 +1,45 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME REPOSITORY_NAME_DERIVED CODE_REPOSITORY_DEFAULT_TEMPLATE_ID
+
+BITBUCKET_SPEC_ID="ca7019c5-f7da-4b79-8fd6-28afbaea366b"
+
+export CODE_REPOSITORY_PROVIDER="bitbucket"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+export APPLICATION_NAME_FROM_REPOSITORY="true"
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c '.repository_url = "https://bitbucket.org/acme/legacy-service" | del(.template_id)')
+export REPOSITORY_NAME_RULE APPLICATION
+
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+if [[ "\$1" == "provider" ]]; then
+  echo '{"results":[{"id":"cfg-1","specification_id":"$BITBUCKET_SPEC_ID","attributes":{"setup":{},"access":{}}}]}'
+else
+  echo '{}'
+fi
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+
+if [[ "$name" != "legacy-service" ]]; then
+  echo "  FAIL: expected the imported repository to keep its name, got '$name'"
+  exit 1
+fi
+
+got=$(jq -r '.slug // empty' "$ALM_CALLBACK_BODY_FILE" 2>/dev/null)
+
+if [[ "$got" != "net-app-fire-issuance" ]]; then
+  echo "  FAIL: expected the application to be renamed on import on any provider, got slug '$got'"
+  exit 1
+fi
