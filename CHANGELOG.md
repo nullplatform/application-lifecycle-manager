@@ -7,7 +7,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-27
+
 ### Added
+- `APPLICATION_NAME_FROM_REPOSITORY` also renames applications that import an existing repository.
 - Add rule engine to generate repository name (`REPOSITORY_NAME_RULE` / `REPOSITORY_NAME_RULE_B64`).
 - Add hooks to call client-owned scripts: `approve_creation` and `scaffold_repository` (no-op by default).
 - Scaffold repositories from a client-owned script (`TRIGGER_SCAFFOLD_SCRIPT`), with an optional

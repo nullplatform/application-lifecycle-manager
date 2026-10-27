@@ -308,7 +308,9 @@ Set one or the other, not both: the plain variable wins when it is non-empty.
 Two cases deliberately: an application whose strategy resolves to `import` (no `template_id` on the
 application **and** no `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` on the agent), and any deployment with
 no rule set. The signal is the strategy, not the `repository_url` — the console fills that in for
-every application before the hook ever runs.
+every application before the hook ever runs. An import keeps its repository name even with
+[`APPLICATION_NAME_FROM_REPOSITORY`](#renaming-the-application-after-its-repository), which then
+renames only the application.
 
 > **The derived URL travels back in `callback_body`.** An application being created answers
 > `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` to `np application update` for a window at the
@@ -336,6 +338,9 @@ extra_envs = {
 ```
 
 - It only applies when a name was derived from the rule, and only lands when the hook succeeds.
+- It also applies to an `import`: the rule renames the application, and the imported repository
+  and its `repository_url` are left as they are. A rule that cannot name the application fails the
+  hook, as it does on `create`.
 - `APPLICATION_SLUG` switches to the new slug as soon as the name is derived, so the asset
   repository path, the CI api key's name and the scaffolding script all use it.
 - If the platform refuses the close because of the slug, entrypoint closes the hook again without
