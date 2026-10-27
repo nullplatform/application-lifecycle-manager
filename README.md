@@ -167,17 +167,57 @@ extra_envs:
 by itself. Unset, nothing changes and the application's own template is used, so an installation
 that shows the chooser is unaffected.
 
-> **Setting this removes the import path for the whole installation.** The absence of a
+> **On its own, this removes the import path for the whole installation.** The absence of a
 > `template_id` was the only signal the dispatcher had for "this application is importing an
 > existing repository", and this variable overrides that signal. It is
 > agent-level, not per-application, so once it is set **every** application resolves to `create`,
 > and one that points at a repository that already exists now fails at
 > `validate_repository_does_not_exist` with *"Repository already exists but strategy is set to
-> 'create'."* Leave it unset on installations that still import.
+> 'create'."* Set [`CODE_REPOSITORY_IMPORT_CONDITION`](#importing-alongside-a-default-template)
+> as well to keep imports working, or leave this unset on installations that still import.
 
 The id is read at run time: a template that does not resolve, or one whose record carries no `url`,
 stops the workflow naming the id and the variable it came from. It is not validated when the agent
 starts, so a typo surfaces on the first application created after the change.
+
+##### Importing alongside a default template
+
+Nothing the console sends tells "create a new repository" from "import an existing one" once the
+template chooser is gone: both arrive with the same `template_id` (none, or the platform's global
+default), and both carry a `repository_url`, because the console defaults it to
+`<namespace-slug>-<application-slug>`. So the developer has to say so. Add a field to the
+application's metadata specification (a boolean, say `import_repository`) and point
+`CODE_REPOSITORY_IMPORT_CONDITION` at it:
+
+```yaml
+extra_envs:
+  CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: "1855672260"
+  CODE_REPOSITORY_IMPORT_CONDITION: ".application.metadata.application.import_repository"
+```
+
+The value is a dotted path against the hook context, the same syntax the
+[naming rule](#paths) uses. What it holds decides the strategy:
+
+| Value at the path | Strategy |
+|---|---|
+| `true`, `"true"`, `"True"` | `import`: the application's `repository_url`, as it is |
+| `false`, `"false"`, `""`, or absent | as before: `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID`, else the application's own template, else `import` |
+| anything else | the hook fails, naming the path and the value |
+
+An import really is an import, the same as one without the variable:
+
+- **No template is read**, not even a `template_id` the application carries. On a console that
+  shows the chooser, that may be the platform's global default, and the developer said import.
+- **No name is derived** from `REPOSITORY_NAME_RULE`, and **the application is not renamed** under
+  `APPLICATION_NAME_FROM_REPOSITORY`. The repository already has a name.
+- The repository has to exist: `validate_repository_does_not_exist` fails the hook if it doesn't.
+
+Misconfiguration stops the hook instead of falling back to `create`, because silently creating a
+repository nobody asked for is what this variable exists to prevent. That covers a value that is
+not a dotted path, a path that holds something other than true/false (it names the wrong field),
+and an import with no `repository_url`.
+
+Unset, nothing changes.
 
 #### Naming the repository from a rule
 
@@ -306,8 +346,8 @@ Set one or the other, not both: the plain variable wins when it is non-empty.
 ##### What is left alone
 
 Two cases deliberately: an application whose strategy resolves to `import` (no `template_id` on the
-application **and** no `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` on the agent), and any deployment with
-no rule set. The signal is the strategy, not the `repository_url` — the console fills that in for
+application **and** no `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` on the agent, or
+`CODE_REPOSITORY_IMPORT_CONDITION` holding true), and any deployment with no rule set. The signal is the strategy, not the `repository_url` — the console fills that in for
 every application before the hook ever runs.
 
 > **The derived URL travels back in `callback_body`.** An application being created answers

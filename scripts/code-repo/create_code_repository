@@ -16,6 +16,77 @@ fi
 REPOSITORY_URL=$(echo "$APPLICATION" | jq -r .repository_url)
 TEMPLATE_ID=$(echo "$APPLICATION" | jq -r '.template_id // empty' )
 
+# An explicit "this application imports an existing repository", read from a
+# path in the hook context -- typically a field of the application's metadata
+# form, like .application.metadata.application.import_repository.
+#
+# It exists because CODE_REPOSITORY_DEFAULT_TEMPLATE_ID (below) overrides the
+# only signal the dispatcher had for an import, the absence of a template_id, and
+# with nothing to replace it an installation that sets the default could never
+# import again. Nothing else the console sends can stand in: a console without
+# the chooser sends the same template_id -- none, or the platform's global
+# default -- for "create" and for "import", and it fills in a repository_url for
+# both. So it has to be asked for, and the developer is the one who knows.
+#
+# Opt-in: unset, nothing changes. Set, it decides before the default template
+# does, and it wins over a template the application carries too -- that may be
+# the console's global default, and the developer said import.
+CODE_REPOSITORY_IMPORTING=false
+
+if [[ -n "${CODE_REPOSITORY_IMPORT_CONDITION:-}" ]]; then
+  # shellcheck source=scripts/code-repo/context_path
+  source "$CURRENT_DIR/context_path"
+
+  # Checked up front: a path that is not a path never resolves, and reading
+  # "absent" as "do not import" would quietly turn every import into a creation
+  # -- the very thing this variable exists to stop.
+  if [[ ! "$CODE_REPOSITORY_IMPORT_CONDITION" =~ $CONTEXT_PATH_RE ]]; then
+    echo "ERROR: CODE_REPOSITORY_IMPORT_CONDITION is '$CODE_REPOSITORY_IMPORT_CONDITION', which is not a path into the hook context. A path is dotted, like .application.metadata.application.import_repository. Check that value on the agent."
+    exit 1
+  fi
+
+  IMPORT_CONDITION_VALUE=$(context_path_value "$CODE_REPOSITORY_IMPORT_CONDITION")
+
+  # A boolean field arrives as true/false, but a metadata form may store it as
+  # the string "true" or "True"; all of them mean the same. Absent or empty is a
+  # developer who did not tick the box, which is "create".
+  #
+  # Anything else is refused rather than read as false: it means the path points
+  # at some other field -- a free-text one, an object -- and treating that as
+  # "create" would hide the misconfiguration behind a repository nobody wanted.
+  case "$(printf '%s' "$IMPORT_CONDITION_VALUE" | tr '[:upper:]' '[:lower:]')" in
+    true)
+      CODE_REPOSITORY_IMPORTING=true
+      ;;
+    false | "")
+      echo "CODE_REPOSITORY_IMPORT_CONDITION: $CODE_REPOSITORY_IMPORT_CONDITION is '${IMPORT_CONDITION_VALUE:-absent}', so this application does not import a repository"
+      ;;
+    *)
+      echo "ERROR: CODE_REPOSITORY_IMPORT_CONDITION points at $CODE_REPOSITORY_IMPORT_CONDITION, which holds '$IMPORT_CONDITION_VALUE'. It has to be true or false (or absent). Check that the path names the metadata field that says whether the application imports a repository."
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ "$CODE_REPOSITORY_IMPORTING" == "true" ]]; then
+  # The console fills repository_url in for every application, so this only
+  # happens when something upstream dropped it. Caught here, because an import
+  # with no URL would go looking for a repository literally named "null".
+  if [[ -z "$REPOSITORY_URL" || "$REPOSITORY_URL" == "null" ]]; then
+    echo "ERROR: $CODE_REPOSITORY_IMPORT_CONDITION says this application imports a repository, but it has no repository_url to import."
+    exit 1
+  fi
+
+  if [[ -n "$TEMPLATE_ID" ]]; then
+    echo "Import requested ($CODE_REPOSITORY_IMPORT_CONDITION is true): ignoring the application's template $TEMPLATE_ID and importing $REPOSITORY_URL"
+  else
+    echo "Import requested ($CODE_REPOSITORY_IMPORT_CONDITION is true): importing $REPOSITORY_URL"
+  fi
+
+  # Cleared rather than routed around, so the strategy below falls to `import`
+  # through the same branch every other import takes.
+  TEMPLATE_ID=""
+
 # An installation can take the template chooser out of the console, so that every
 # application is scaffolded the same way and the templating happens in the hooks
 # instead. CODE_REPOSITORY_DEFAULT_TEMPLATE_ID is the template those applications
@@ -26,7 +97,7 @@ TEMPLATE_ID=$(echo "$APPLICATION" | jq -r '.template_id // empty' )
 # to an empty field was unreachable from the one installation it exists for. The
 # application's own template stays in charge wherever this is unset, which is
 # every installation that shows the chooser.
-if [[ -n "$CODE_REPOSITORY_DEFAULT_TEMPLATE_ID" ]]; then
+elif [[ -n "$CODE_REPOSITORY_DEFAULT_TEMPLATE_ID" ]]; then
   if [[ -n "$TEMPLATE_ID" && "$TEMPLATE_ID" != "$CODE_REPOSITORY_DEFAULT_TEMPLATE_ID" ]]; then
     echo "Overriding the application's template $TEMPLATE_ID with CODE_REPOSITORY_DEFAULT_TEMPLATE_ID: $CODE_REPOSITORY_DEFAULT_TEMPLATE_ID"
   else

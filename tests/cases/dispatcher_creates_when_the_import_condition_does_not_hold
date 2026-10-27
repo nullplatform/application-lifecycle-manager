@@ -1,0 +1,76 @@
+#!/bin/bash
+# The other half of CODE_REPOSITORY_IMPORT_CONDITION: an application whose
+# field is false, empty or missing is a creation, and gets everything a
+# creation gets with the default template -- the template, the derived name.
+#
+# And with the variable unset, the field means nothing: the default template
+# overrides as it always has, so installations that never set it are untouched.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+GITHUB_SPEC_ID="1043b379-9fa8-4d2d-bc18-9c5b0d3038f2"
+export CODE_REPOSITORY_PROVIDER="github"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+case "\$1" in
+  provider) echo '{"results":[{"id":"cfg-1","specification_id":"$GITHUB_SPEC_ID","attributes":{"setup":{"organization":"acme"},"access":{}}}]}' ;;
+  template) echo '{"id":1855672260,"url":"https://github.com/nullplatform/technology-templates-any"}' ;;
+  *)        echo '{}' ;;
+esac
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="1855672260"
+export CODE_REPOSITORY_IMPORT_CONDITION=".application.metadata.application.import_repository"
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+# expect_create LABEL -- the default template, and the name from the rule.
+expect_create() {
+  local label="$1" strategy name url
+
+  strategy=$(capture_code_repo_export create_code_repository CODE_REPOSITORY_STRATEGY)
+  name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+  url=$(capture_code_repo_export create_code_repository TEMPLATE_URL)
+
+  [[ "$strategy" == "create" ]] || { echo "  FAIL ($label): expected strategy 'create', got '$strategy'"; failed=1; }
+  [[ "$name" == "net-app-fire-issuance" ]] || { echo "  FAIL ($label): expected the derived name, got '$name'"; failed=1; }
+  [[ "$url" == "https://github.com/nullplatform/technology-templates-any" ]] || { echo "  FAIL ($label): expected the default template's URL, got '$url'"; failed=1; }
+}
+
+# What the console sends for "create new": no template and a defaulted URL --
+# the same shape as an import, which is why the field is needed at all.
+base=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance \
+  | jq -c 'del(.template_id) | .repository_url = "https://github.com/acme/ns-app"')
+
+APPLICATION="$base"
+export APPLICATION
+expect_create "field missing"
+
+APPLICATION=$(jq -c '.metadata.application.import_repository = ""' <<<"$base")
+expect_create "field empty"
+
+APPLICATION=$(jq -c '.metadata.application.import_repository = "false"' <<<"$base")
+expect_create "string \"false\""
+
+APPLICATION=$(jq -c '.metadata.application.import_repository = false' <<<"$base")
+expect_create "boolean false"
+
+# Unset, the field is ignored even when it says import: the default template
+# overrides, as it did before the variable existed.
+unset CODE_REPOSITORY_IMPORT_CONDITION
+APPLICATION=$(jq -c '.metadata.application.import_repository = true' <<<"$base")
+expect_create "variable unset"
+
+exit "$failed"

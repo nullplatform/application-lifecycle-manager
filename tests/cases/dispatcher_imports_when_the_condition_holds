@@ -1,0 +1,106 @@
+#!/bin/bash
+# CODE_REPOSITORY_DEFAULT_TEMPLATE_ID overrides the one signal the dispatcher had
+# for an import -- the absence of a template_id -- so an installation that sets
+# it could only ever create. CODE_REPOSITORY_IMPORT_CONDITION gives the import
+# back: a path into the hook context, typically a metadata field the developer
+# ticks, that forces the `import` strategy when it is true.
+#
+# What "import" means here is exactly what it meant before the default existed:
+# the application's own repository_url, untouched. No template is read, no name
+# is derived from the naming rule, and the application is not renamed after a
+# repository it did not create.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+unset REPOSITORY_NAME
+
+GITHUB_SPEC_ID="1043b379-9fa8-4d2d-bc18-9c5b0d3038f2"
+export CODE_REPOSITORY_PROVIDER="github"
+export NRN="organization=1:account=2:namespace=3:application=4"
+export ACCOUNT_ID="2"
+
+cat > "$TEST_TMP/np" <<STUB
+#!/bin/bash
+printf 'np\t%s\n' "\$*" >> "\$BB_CALLS"
+case "\$1" in
+  provider) echo '{"results":[{"id":"cfg-1","specification_id":"$GITHUB_SPEC_ID","attributes":{"setup":{"organization":"acme"},"access":{}}}]}' ;;
+  template) echo '{"id":1855672260,"url":"https://github.com/nullplatform/technology-templates-any"}' ;;
+  *)        echo '{}' ;;
+esac
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+# The installation this exists for: a default template, a naming rule, and
+# applications renamed after their repository.
+export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="1855672260"
+export CODE_REPOSITORY_IMPORT_CONDITION=".application.metadata.application.import_repository"
+export APPLICATION_NAME_FROM_REPOSITORY="true"
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+
+REPOSITORY_NAME_RULE=$(wizard_rule)
+export REPOSITORY_NAME_RULE
+
+failed=0
+
+# expect_import LABEL -- runs the dispatcher on the current $APPLICATION and
+# checks that it imported the application's repository_url as it is.
+expect_import() {
+  local label="$1" strategy name derived
+
+  : > "$BB_CALLS"
+  rm -f "$ALM_CALLBACK_BODY_FILE"
+
+  strategy=$(capture_code_repo_export create_code_repository CODE_REPOSITORY_STRATEGY)
+  name=$(capture_code_repo_export create_code_repository REPOSITORY_NAME)
+  derived=$(capture_code_repo_export create_code_repository REPOSITORY_NAME_DERIVED)
+
+  [[ "$strategy" == "import" ]] || { echo "  FAIL ($label): expected strategy 'import', got '$strategy'"; failed=1; }
+  [[ "$name" == "existing-repo" ]] || { echo "  FAIL ($label): expected the repository_url's own name, got '$name'"; failed=1; }
+  [[ -z "$derived" ]] || { echo "  FAIL ($label): an import must not derive a name, got REPOSITORY_NAME_DERIVED='$derived'"; failed=1; }
+
+  if grep -q 'template read' "$BB_CALLS"; then
+    echo "  FAIL ($label): an import read a template:"
+    grep 'template read' "$BB_CALLS" | sed 's/^/    /'
+    failed=1
+  fi
+
+  if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
+    echo "  FAIL ($label): an import must not rename the application, callback body: $(cat "$ALM_CALLBACK_BODY_FILE")"
+    failed=1
+  fi
+}
+
+# What the console sends for "import": no template, the URL the developer typed,
+# and the metadata answers -- the box ticked, as a form stores it.
+APPLICATION=$(wizard_metadata architecture=.NET dotnet_type=APP domain=fire subdomain=issuance import_repository=true \
+  | jq -c 'del(.template_id) | .repository_url = "https://github.com/acme/existing-repo"')
+export APPLICATION
+expect_import "string \"true\""
+
+# A boolean field, and a form that capitalises.
+APPLICATION=$(jq -c '.metadata.application.import_repository = true' <<<"$APPLICATION")
+expect_import "boolean true"
+
+APPLICATION=$(jq -c '.metadata.application.import_repository = "True"' <<<"$APPLICATION")
+expect_import "string \"True\""
+
+# A template on the application does not turn it back into a creation: on a
+# console that shows the chooser it may be the platform's global default, and
+# the developer said import.
+APPLICATION=$(jq -c '.metadata.application.import_repository = true | .template_id = 777' <<<"$APPLICATION")
+expect_import "application carries a template"
+
+# And without the default template, the condition still decides.
+unset CODE_REPOSITORY_DEFAULT_TEMPLATE_ID
+expect_import "no default template"
+
+# The run says why it is importing, so a developer reading the hook messages
+# sees which field decided it.
+export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="1855672260"
+run_code_repo_step create_code_repository
+assert_contains "Import requested" || failed=1
+assert_contains "import_repository is true" || failed=1
+
+exit "$failed"

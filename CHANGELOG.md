@@ -16,6 +16,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - `alm_cancel` closes the hook as `cancelled` instead of `failed`.
 - `GITHUB_APP_SECRET_ID` reads the GitHub App credentials from a secrets store at run time.
 - `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` gives applications created without a template a default one.
+- `CODE_REPOSITORY_IMPORT_CONDITION` names a metadata field that forces the `import` strategy, so an
+  installation with `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` set can still import existing repositories.
 - Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses the template's pipeline file.
 - Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build.
 - Test suite for the GitHub code repository provider.

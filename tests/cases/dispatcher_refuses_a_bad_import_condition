@@ -1,0 +1,78 @@
+#!/bin/bash
+# CODE_REPOSITORY_IMPORT_CONDITION exists so that an import is never quietly
+# turned into a creation. So every way it can be misconfigured stops the hook
+# instead of reading as "do not import":
+#
+#   - a value that is not a dotted path, which would never resolve;
+#   - a path to a field that is neither true nor false -- some other field;
+#   - an import with no repository_url to import.
+#
+# None of them reaches the template or the provider: nothing is created.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+echo '{}'
+STUB
+chmod +x "$TEST_TMP/np"
+export PATH="$TEST_TMP:$PATH"
+
+export CODE_REPOSITORY_PROVIDER="github"
+export CODE_REPOSITORY_DEFAULT_TEMPLATE_ID="1855672260"
+
+failed=0
+
+# expect_refusal LABEL NEEDLE -- the dispatcher stops, says NEEDLE, and reaches
+# neither the template nor the provider. (workflow_skip's nrn read runs before
+# any of this, so it is the one call allowed.)
+expect_refusal() {
+  local label="$1" needle="$2"
+
+  : > "$BB_CALLS"
+  run_code_repo_step create_code_repository
+
+  if [[ "$STEP_STATUS" -eq 0 ]]; then
+    echo "  FAIL ($label): expected the dispatcher to stop"
+    failed=1
+  fi
+
+  if [[ "$STEP_OUTPUT" != *"$needle"* ]]; then
+    echo "  FAIL ($label): expected the output to mention '$needle'"
+    printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+    failed=1
+  fi
+
+  if grep -Eq $'^np\t(template|account|provider|service) ' "$BB_CALLS"; then
+    echo "  FAIL ($label): it went on past the refusal:"
+    sed 's/^/    /' "$BB_CALLS"
+    failed=1
+  fi
+}
+
+APPLICATION=$(wizard_metadata import_repository=true \
+  | jq -c 'del(.template_id) | .repository_url = "https://github.com/acme/existing-repo"')
+export APPLICATION
+
+# No leading dot, and a jq program: neither is a path.
+export CODE_REPOSITORY_IMPORT_CONDITION="application.metadata.application.import_repository"
+expect_refusal "no leading dot" "not a path into the hook context"
+
+export CODE_REPOSITORY_IMPORT_CONDITION='.application.metadata | keys'
+expect_refusal "jq program" "not a path into the hook context"
+
+# A path that resolves, to the wrong field.
+export CODE_REPOSITORY_IMPORT_CONDITION=".application.metadata.application.import_repository"
+APPLICATION=$(jq -c '.metadata.application.import_repository = "yes"' <<<"$APPLICATION")
+expect_refusal "not a boolean" "holds 'yes'"
+
+APPLICATION=$(jq -c '.metadata.application.import_repository = {"enabled": true}' <<<"$APPLICATION")
+expect_refusal "an object" "It has to be true or false"
+
+# Import asked for, nothing to import.
+APPLICATION=$(jq -c '.metadata.application.import_repository = true | .repository_url = null' <<<"$APPLICATION")
+expect_refusal "no repository_url" "no repository_url to import"
+
+exit "$failed"
