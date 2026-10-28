@@ -23,71 +23,67 @@
 #
 # Sourced, like every other script here: no `set -e`, messages to stdout.
 
-if ! type -t alm_callback_body_set >/dev/null 2>&1; then
-  # alm_callback_body_set KEY VALUE
-  #
-  # Merges one field into the callback body. A no-op when no file is configured,
-  # so a step can call it unconditionally and stay usable outside a hook run.
-  alm_callback_body_set() {
-    local key="$1" value="$2"
-    local current='{}'
+# alm_callback_body_set KEY VALUE
+#
+# Merges one field into the callback body. A no-op when no file is configured,
+# so a step can call it unconditionally and stay usable outside a hook run.
+alm_callback_body_set() {
+  local key="$1" value="$2"
+  local current='{}'
 
-    if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
-      return 0
-    fi
+  if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+    return 0
+  fi
 
-    if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
-      current=$(cat "$ALM_CALLBACK_BODY_FILE")
-    fi
+  if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
+    current=$(cat "$ALM_CALLBACK_BODY_FILE")
+  fi
 
-    if ! printf '%s' "$current" \
-      | jq -c --arg k "$key" --arg v "$value" '. + {($k): $v}' > "$ALM_CALLBACK_BODY_FILE.tmp"; then
-      echo "WARNING: could not add '$key' to the callback body, leaving it out"
-      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
-      return 1
-    fi
+  if ! printf '%s' "$current" \
+    | jq -c --arg k "$key" --arg v "$value" '. + {($k): $v}' > "$ALM_CALLBACK_BODY_FILE.tmp"; then
+    echo "WARNING: could not add '$key' to the callback body, leaving it out"
+    rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+    return 1
+  fi
 
-    if ! mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"; then
-      echo "WARNING: could not update the callback body with '$key', leaving it out"
-      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
-      return 1
-    fi
-  }
-fi
+  if ! mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"; then
+    echo "WARNING: could not update the callback body with '$key', leaving it out"
+    rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+    return 1
+  fi
+}
 
-if ! type -t alm_callback_body_merge >/dev/null 2>&1; then
-  # alm_callback_body_merge JSON_OBJECT
-  #
-  # Deep-merges an object into the callback body, for fields that are not a
-  # top-level string -- the asset location lives under settings.asset, which
-  # entrypoint sets aside and patches after the close instead of sending. Nested
-  # objects are merged, not replaced, so two steps can each add their own key
-  # under `settings`. A no-op when no file is configured, like
-  # alm_callback_body_set.
-  alm_callback_body_merge() {
-    local object="$1"
-    local current='{}'
+# alm_callback_body_merge JSON_OBJECT
+#
+# Deep-merges an object into the callback body, for fields that are not a
+# top-level string -- the asset location lives under settings.asset, which
+# entrypoint sets aside and patches after the close instead of sending. Nested
+# objects are merged, not replaced, so two steps can each add their own key
+# under `settings`. A no-op when no file is configured, like
+# alm_callback_body_set.
+alm_callback_body_merge() {
+  local object="$1"
+  local current='{}'
 
-    if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
-      return 0
-    fi
+  if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+    return 0
+  fi
 
-    if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
-      current=$(cat "$ALM_CALLBACK_BODY_FILE")
-    fi
+  if [[ -s "$ALM_CALLBACK_BODY_FILE" ]]; then
+    current=$(cat "$ALM_CALLBACK_BODY_FILE")
+  fi
 
-    if ! printf '%s' "$current" \
-      | jq -c --argjson o "$object" 'if ($o | type) == "object" then . * $o else error("not an object") end' \
-        > "$ALM_CALLBACK_BODY_FILE.tmp" 2>/dev/null; then
-      echo "WARNING: could not merge $object into the callback body, leaving it out"
-      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
-      return 1
-    fi
+  if ! printf '%s' "$current" \
+    | jq -c --argjson o "$object" 'if ($o | type) == "object" then . * $o else error("not an object") end' \
+      > "$ALM_CALLBACK_BODY_FILE.tmp" 2>/dev/null; then
+    echo "WARNING: could not merge $object into the callback body, leaving it out"
+    rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+    return 1
+  fi
 
-    if ! mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"; then
-      echo "WARNING: could not update the callback body with $object, leaving it out"
-      rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
-      return 1
-    fi
-  }
-fi
+  if ! mv "$ALM_CALLBACK_BODY_FILE.tmp" "$ALM_CALLBACK_BODY_FILE"; then
+    echo "WARNING: could not update the callback body with $object, leaving it out"
+    rm -f "$ALM_CALLBACK_BODY_FILE.tmp"
+    return 1
+  fi
+}
