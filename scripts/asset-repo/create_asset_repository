@@ -28,6 +28,12 @@ fi
 
 ASSET_REPOSITORY_SCRIPT_PATH="scripts/asset-repo/$ASSET_REPOSITORY_PROVIDER"
 
+# Otherwise the workflow fails on the first step with a bare file-not-found.
+if [[ -z "$ASSET_REPOSITORY_PROVIDER" || ! -d "$CURRENT_DIR/$ASSET_REPOSITORY_PROVIDER" ]]; then
+  echo "ERROR: asset repository provider '$ASSET_REPOSITORY_PROVIDER' is not implemented in this repository ($ASSET_REPOSITORY_SCRIPT_PATH not found)."
+  exit 1
+fi
+
 export ASSET_REPOSITORY_TYPE
 export ASSET_REPOSITORY
 

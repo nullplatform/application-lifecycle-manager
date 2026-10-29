@@ -1,0 +1,18 @@
+#!/bin/bash
+# A rerun finds the repository already there, tagged with its own application:
+# it is described, reused, and its own URI is the one stored.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="payments-api"
+ecr_fixture create-repository 254 '' 'An error occurred (RepositoryAlreadyExistsException) when calling the CreateRepository operation'
+ecr_fixture describe-repositories 0 '{"repositories":[{"repositoryUri":"123.dkr.ecr.us-east-1.amazonaws.com/existing","repositoryArn":"arn:aws:ecr:us-east-1:123:repository/existing"}]}'
+ecr_fixture list-tags-for-resource 0 '{"tags":[{"Key":"team","Value":"payments"},{"Key":"nullplatform:application_id","Value":"42"}]}'
+np_patch_responses '0:{}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 0 || exit 1
+assert_contains "already exists and belongs to application 42, reusing it" || exit 1
+grep -q -- "list-tags-for-resource --resource-arn arn:aws:ecr:us-east-1:123:repository/existing" "$BB_CALLS" || { echo "  FAIL: tags not read from the described ARN"; exit 1; }
+[[ "$(patch_body | jq -r .settings.asset.ecr.uri)" == "123.dkr.ecr.us-east-1.amazonaws.com/existing" ]] || { echo "  FAIL: described uri not patched: $(patch_body)"; exit 1; }

@@ -1,0 +1,14 @@
+#!/bin/bash
+# A warning the CLI prints to stderr on a successful call must not break the
+# parse of its JSON.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="payments-api"
+ecr_fixture create-repository 0 '{"repository":{"repositoryUri":"123.dkr.ecr.us-east-1.amazonaws.com/payments-api","repositoryArn":"arn:aws:ecr:us-east-1:123:repository/payments-api"}}' 'WARNING: urllib3 deprecation notice'
+np_patch_responses '0:{}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 0 || exit 1
+[[ "$(patch_count)" == 1 ]] || { echo "  FAIL: the application was not patched"; exit 1; }

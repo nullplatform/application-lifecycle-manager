@@ -316,7 +316,8 @@ every application before the hook ever runs.
 > is a state lock, not a permission problem, and it is narrow: measured against a real hook it lifts
 > while the application is still in `pending_hook`, and the same `PATCH` then succeeds and applies.
 > So the callback is not the only write the platform accepts, it is the one that does not depend on
-> when a step happens to run. Once the repository exists its canonical URL is placed in the
+> when a step happens to run. The window does not always lift, either: see
+> [Creating an asset repository](#creating-an-asset-repository). Once the repository exists its canonical URL is placed in the
 > `callback_body` of the `PATCH` that closes the hook, and nullplatform merges it into the entity as
 > it resumes. A failed hook closes with a status and no `callback_body`, because a run that stopped
 > before creating the repository must not leave the application pointing at something that does not
@@ -425,28 +426,99 @@ You must configure your asset repository provider through **nullplatform platfor
 The asset repository workflow is composed of the following tasks:
 
 - **Build context**  
-  Fetches all necessary credentials and configuration for the target asset registry.
+  Resolves the provider's configuration (registry URI for Docker Server; region, path and naming for ECR).
+
+- **Generate repository URI**  
+  Derives the repository name from the namespace and application slugs.
 
 - **Create repository**  
-  Creates a namespace/folder in your Docker registry for the new application and stores its location in the nullplatform API.
+  Creates the repository (a path in the Docker registry, or an ECR repository) and stores its location
+  on the application.
 
 #### Using AWS ECR
 
-To use AWS ECR as the asset repository provider, set `ASSET_REPOSITORY_PROVIDER=ecr` in the
-agent environment along with:
+The ECR provider (`ecr`) is picked up from platform settings like any other, or forced with
+`ASSET_REPOSITORY_PROVIDER=ecr` in the agent environment. It reads:
 
 | Variable              | Required | Description                                                       |
 |-----------------------|----------|-------------------------------------------------------------------|
-| `AWS_REGION`          | yes      | Region where the ECR repository is created.                       |
-| `ECR_REPOSITORY_PATH` | no       | Optional prefix prepended to the repository name.                 |
-| `ECR_USE_NAMESPACE`   | no       | When `true`, joins namespace and application with `/` instead of `-`. |
+| `ECR_REGION`          | no       | Region where the ECR repository is created. Overrides the provider's `setup.region`; `AWS_REGION` is used only when neither is set. |
+| `ECR_REPOSITORY_PATH` | no       | Optional prefix prepended to the repository name. Leading and trailing `/` are ignored. |
+| `ECR_USE_NAMESPACE`   | no       | When exactly `true`, joins namespace and application with `/`; anything else (default) uses `-`. |
+| `ECR_ADOPT_UNTAGGED`  | no       | When exactly `true`, adopts an existing repository that has no owner tag. Default: the step fails. |
 
-The generated repository name must satisfy ECR naming rules (lowercase, made up of `[a-z0-9._/-]`, no leading slash). Choose `ECR_REPOSITORY_PATH` and namespace/application slugs accordingly.
+`AWS_REGION` is not the override because on EKS the pod identity webhook always sets it to the
+cluster's region.
 
-**Prerequisites:** the agent host must have the `aws` CLI installed and AWS credentials
-available in its environment (for example, via IRSA on EKS). The bound IAM role needs
-`ecr:CreateRepository` and `ecr:DescribeRepositories`. The repository URI and ARN are read
-from the AWS API response and persisted to the application's `settings.asset.ecr`.
+The generated name is checked against ECR's naming rules (2-256 characters, lowercase segments of
+`[a-z0-9._-]` separated by `/`) before AWS is called. With the `-` separator two applications can
+map to the same name (namespace `a-b` + application `c`, and namespace `a` + application `b-c`).
+
+Each repository is created with the tag `nullplatform:application_id=<application id>`. When the name
+already exists, the step reads that tag:
+
+- **Same application** (a rerun): the repository is reused.
+- **Another application**: the step fails and names the owner. Give this application its own name
+  with `ECR_REPOSITORY_PATH` or `ECR_USE_NAMESPACE=true`.
+- **No tag** (created by hand, or before this provider): the step fails, unless
+  `ECR_ADOPT_UNTAGGED=true`, which adopts it with a warning. Tagging the repository with this
+  application's id has the same effect for that one repository.
+
+**Prerequisites:** the agent host must have the `aws` CLI and `jq` installed, and AWS credentials
+available in its environment (for example, via IRSA on EKS). The platform provider's `role_arn` and
+`external_id` are not read; a role is assumed only as described in
+[Assuming a role for ECR](#assuming-a-role-for-ecr). The role that calls ECR needs
+`ecr:CreateRepository` and `ecr:TagResource` (the owner tag is set on create), plus
+`ecr:DescribeRepositories` and `ecr:ListTagsForResource` when the repository already exists. The
+repository URI and ARN are read from the AWS API response and stored on the application as
+`settings.asset.ecr.uri` and `settings.asset.ecr.arn`.
+
+##### Assuming a role for ECR
+
+Before calling ECR, the provider assumes an IAM role when one is configured, taken from the
+first of:
+
+1. `ECR_ASSUME_ROLE_ARN` in the agent environment.
+2. The `asset_provider_ecr` selector of the application's `identity-access-control` provider
+   (`iam_role_arns.arns[]`).
+3. `ECR_ASSUME_ROLE_ARN_DEFAULT` in the agent environment.
+
+When none is set, the agent's own credentials are used. The agent's role needs `sts:AssumeRole`
+on the target role, and the target role must trust it. Scope that permission to the role ARNs you
+configure rather than `arn:aws:iam::*:role/*`: anyone who can edit the identity-access-control
+provider chooses which role the agent assumes. A failed provider lookup, a value that is not an
+IAM role ARN, or a failed assume stops the workflow.
+
+```hcl
+module "identity_access_control" {
+  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/identity-access-control"
+
+  nrn = var.nrn
+  attributes = {
+    iam_role_arns = {
+      arns = [{ selector = "asset_provider_ecr", arn = "arn:aws:iam::123456789012:role/nullplatform-ecr" }]
+    }
+  }
+}
+```
+
+Inside a creation hook, both providers hand that location to `entrypoint`, which writes it with
+`np application patch` once it has closed the hook. Neither of the two other ways works:
+
+- A `PATCH` from the step races the hook lock, which can hold for the whole run: with the code
+  repository step skipped, the asset step runs seconds into the hook and every `np application
+  update` answers `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` until the hook closes.
+- The hook's `callback_body` does not take it: a hook closed with `settings` in its callback body
+  is accepted, and the application then stays in `pending_hook` with no error. Top-level fields
+  such as `repository_url` are applied normally.
+
+So the location reaches the application a few seconds after the hook closes, and only when the hook
+closed as `success`. If that `PATCH` fails, the application is created without it and the agent log
+says so, with the body to set by hand; the hook has already reported its status by then.
+
+Both that `PATCH` and the one made outside a hook (the workflow run by hand) retry a `403
+ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` (`ASSET_PATCH_ATTEMPTS`, default `6`;
+`ASSET_PATCH_RETRY_DELAY`, default `5` seconds). Any other error stops the retries.
 
 ---
 

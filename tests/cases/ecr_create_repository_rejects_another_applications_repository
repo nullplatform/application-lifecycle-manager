@@ -1,0 +1,17 @@
+#!/bin/bash
+# Namespace `a-b` + app `c` and namespace `a` + app `b-c` share a name. The
+# second application must not take over the first one's repository.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="a-b-c"
+ecr_fixture create-repository 254 '' 'An error occurred (RepositoryAlreadyExistsException) when calling the CreateRepository operation'
+ecr_fixture describe-repositories 0 '{"repositories":[{"repositoryUri":"123.dkr.ecr.us-east-1.amazonaws.com/a-b-c","repositoryArn":"arn:aws:ecr:us-east-1:123:repository/a-b-c"}]}'
+np_patch_responses '0:{}'
+ecr_fixture list-tags-for-resource 0 '{"tags":[{"Key":"nullplatform:application_id","Value":"7"}]}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 1 || exit 1
+assert_contains "belongs to application 7, not 42" || exit 1
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: the application was patched with another application's repository"; exit 1; }

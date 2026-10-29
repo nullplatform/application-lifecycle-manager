@@ -30,6 +30,9 @@ setup() {
   export REPOSITORY_SLUG="my-service"
   export REPOSITORY_NAME="my-service"
   export APPLICATION_ID="42"
+
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE \
+    ECR_ASSUME_ROLE_ARN ECR_ASSUME_ROLE_ARN_DEFAULT
 }
 
 teardown() {
@@ -436,4 +439,91 @@ wizard_metadata() {
   done
 
   jq -nc --argjson md "$pairs" '{repository_url: null, template_id: 1777342392, metadata: {application: $md}}'
+}
+
+# ecr_fixture OPERATION CODE STDOUT [STDERR] -- what `aws ecr OPERATION` answers.
+ecr_fixture() {
+  local op="$1"
+
+  printf '%s' "$2" > "$BB_FIXTURES/ecr_${op}.code"
+  printf '%s' "$3" > "$BB_FIXTURES/ecr_${op}.stdout"
+  printf '%s' "${4:-}" > "$BB_FIXTURES/ecr_${op}.stderr"
+}
+
+# np_patch_responses CODE:OUTPUT... -- an np stub whose N-th `application patch`
+# exits CODE printing OUTPUT to stderr (stdout on success). Calls past the list
+# repeat the last one; every other np command answers '{}'.
+np_patch_responses() {
+  local i=1 response
+
+  for response in "$@"; do
+    printf '%s' "$response" > "$BB_FIXTURES/np_patch.$i"
+    i=$((i + 1))
+  done
+
+  cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1 $2" != "application patch" ]]; then
+  echo '{}'
+  exit 0
+fi
+n=$(( $(grep -c $'^np\tapplication patch' "$BB_CALLS") ))
+while [[ ! -f "$BB_FIXTURES/np_patch.$n" ]]; do n=$((n - 1)); done
+response=$(cat "$BB_FIXTURES/np_patch.$n")
+code="${response%%:*}"
+if [[ "$code" == 0 ]]; then
+  echo "${response#*:}"
+else
+  echo "${response#*:}" >&2
+fi
+exit "$code"
+STUB
+  chmod +x "$TEST_TMP/np"
+  export PATH="$TEST_TMP:$PATH"
+}
+
+# patch_body -- the --body of the first `np application patch` call.
+patch_body() {
+  grep $'^np\tapplication patch' "$BB_CALLS" | head -1 | sed -e 's/.*--body \(.*\) --format json$/\1/'
+}
+
+# patch_count -- how many `np application patch` calls were made.
+patch_count() {
+  grep -c $'^np\tapplication patch' "$BB_CALLS"
+}
+
+np_iam_provider() {
+  printf '%s' "$1" > "$BB_FIXTURES/iam_arns.json"
+
+  cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1 $2" == "provider list" && "$*" == *"--categories identity-access-control"* ]]; then
+  if [[ -n "$NP_STUB_IAM_FAIL" ]]; then
+    echo "Error: 503 Service Unavailable" >&2
+    exit 1
+  fi
+  if [[ -n "$NP_STUB_IAM_STDERR" ]]; then
+    echo "$NP_STUB_IAM_STDERR" >&2
+  fi
+  if [[ -n "$NP_STUB_IAM_BODY" ]]; then
+    printf "%s\n" "$NP_STUB_IAM_BODY"
+    exit 0
+  fi
+  jq -n --slurpfile arns "$BB_FIXTURES/iam_arns.json" '{results: [{attributes: {iam_role_arns: {arns: $arns[0]}}}]}'
+  exit 0
+fi
+echo '{}'
+STUB
+  chmod +x "$TEST_TMP/np"
+  export PATH="$TEST_TMP:$PATH"
+}
+
+ecr_build_context_credentials() {
+  (
+    cd "$REPO_ROOT" || exit 1
+    source scripts/asset-repo/ecr/build_context >/dev/null 2>&1 || exit $?
+    printf '%s\n%s\n%s\n' "${AWS_ACCESS_KEY_ID:-}" "${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}"
+  )
 }

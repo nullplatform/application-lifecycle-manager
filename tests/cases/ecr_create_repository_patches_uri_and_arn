@@ -1,0 +1,19 @@
+#!/bin/bash
+# The URI and ARN come from AWS's own answer and are what lands on the application.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="payments-api"
+ecr_fixture create-repository 0 '{"repository":{"repositoryUri":"123.dkr.ecr.us-east-1.amazonaws.com/payments-api","repositoryArn":"arn:aws:ecr:us-east-1:123:repository/payments-api"}}'
+np_patch_responses '0:{}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 0 || exit 1
+
+body=$(patch_body)
+[[ "$(jq -r .settings.asset.ecr.uri <<<"$body")" == "123.dkr.ecr.us-east-1.amazonaws.com/payments-api" ]] || { echo "  FAIL: uri not patched: $body"; exit 1; }
+[[ "$(jq -r .settings.asset.ecr.arn <<<"$body")" == "arn:aws:ecr:us-east-1:123:repository/payments-api" ]] || { echo "  FAIL: arn not patched: $body"; exit 1; }
+grep -q $'^np\tapplication patch --id 42 ' "$BB_CALLS" || { echo "  FAIL: patch did not target application 42"; cat "$BB_CALLS"; exit 1; }
+grep -q -- "--region us-east-1" "$BB_CALLS" || { echo "  FAIL: ECR_REGION not passed to aws"; exit 1; }
+grep -q -- "--tags Key=nullplatform:application_id,Value=42" "$BB_CALLS" || { echo "  FAIL: repository not tagged with its application"; exit 1; }

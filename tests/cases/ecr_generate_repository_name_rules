@@ -1,0 +1,31 @@
+#!/bin/bash
+# The name: hyphen or slash between namespace and application, an optional path
+# with stray slashes trimmed, and anything ECR would refuse rejected up front.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+name_for() {
+  (cd "$REPO_ROOT" && source scripts/asset-repo/ecr/generate_repository_uri >/dev/null 2>&1 && printf '%s' "$ECR_REPOSITORY_NAME")
+}
+
+export NAMESPACE_SLUG="payments" APPLICATION_SLUG="api"
+
+# SC2031: each check runs with its own prefix assignments, and name_for's subshell is meant to.
+# shellcheck disable=SC2031
+check() {
+  local expected="$1" got
+  got=$(name_for)
+  [[ "$got" == "$expected" ]] || { echo "  FAIL: path='$ECR_REPOSITORY_PATH' ns=$ECR_USE_NAMESPACE: expected '$expected', got '$got'"; exit 1; }
+}
+
+ECR_REPOSITORY_PATH="" ECR_USE_NAMESPACE="" check "payments-api"
+ECR_REPOSITORY_PATH="" ECR_USE_NAMESPACE="true" check "payments/api"
+ECR_REPOSITORY_PATH="team" ECR_USE_NAMESPACE="" check "team/payments-api"
+ECR_REPOSITORY_PATH="/team/" ECR_USE_NAMESPACE="true" check "team/payments/api"
+
+# shellcheck disable=SC2031
+export ECR_REPOSITORY_PATH="Team" ECR_USE_NAMESPACE=""
+run_script_step asset-repo/ecr/generate_repository_uri
+assert_status 1 || exit 1
+assert_contains "is not a valid ECR repository name" || exit 1
