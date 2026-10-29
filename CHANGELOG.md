@@ -5,7 +5,7 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
-## [Unreleased]
+## [0.4.0] - 2026-10-29
 
 ### Added
 - Add rule engine to generate repository name (`REPOSITORY_NAME_RULE` / `REPOSITORY_NAME_RULE_B64`).
