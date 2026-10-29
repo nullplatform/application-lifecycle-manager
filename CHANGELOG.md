@@ -32,6 +32,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   (`PYTHON_MISE_VERSION`, `CRYPTOGRAPHY_VERSION`); each failing stage stops with its own message.
 - Test helpers `capture_export` and `run_step` no longer collide with variables in the script under test.
 - `CODE_REPOSITORY_DEFAULT_TEMPLATE_ID` now overrides the application's template, not only an empty one.
+- The README's `workflowSkipConfig` patch skips only the steps this repository takes over. It also
+  skipped `archiveCodeRepository`, `deleteImageRegistry`, `createRepositoryTag` and `createScope`,
+  which nothing here performs, and turned off image repositories for non-`docker-server` providers.
 
 ## [0.3.0] - 2026-08-04
 
