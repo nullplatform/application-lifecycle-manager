@@ -316,7 +316,8 @@ every application before the hook ever runs.
 > is a state lock, not a permission problem, and it is narrow: measured against a real hook it lifts
 > while the application is still in `pending_hook`, and the same `PATCH` then succeeds and applies.
 > So the callback is not the only write the platform accepts, it is the one that does not depend on
-> when a step happens to run. Once the repository exists its canonical URL is placed in the
+> when a step happens to run. The window does not always lift, either: see
+> [Creating an asset repository](#creating-an-asset-repository). Once the repository exists its canonical URL is placed in the
 > `callback_body` of the `PATCH` that closes the hook, and nullplatform merges it into the entity as
 > it resumes. A failed hook closes with a status and no `callback_body`, because a run that stopped
 > before creating the repository must not leave the application pointing at something that does not
@@ -501,10 +502,23 @@ module "identity_access_control" {
 }
 ```
 
-Both providers write that location with `np application patch`. The asset workflow runs while
-the application can still be held by its creation hook, so a `403
-ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` is retried (`ASSET_PATCH_ATTEMPTS`, default `6`;
-`ASSET_PATCH_RETRY_DELAY`, default `5` seconds). Any other error fails the step.
+Inside a creation hook, both providers hand that location to `entrypoint`, which writes it with
+`np application patch` once it has closed the hook. Neither of the two other ways works:
+
+- A `PATCH` from the step races the hook lock, which can hold for the whole run: with the code
+  repository step skipped, the asset step runs seconds into the hook and every `np application
+  update` answers `403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` until the hook closes.
+- The hook's `callback_body` does not take it: a hook closed with `settings` in its callback body
+  is accepted, and the application then stays in `pending_hook` with no error. Top-level fields
+  such as `repository_url` are applied normally.
+
+So the location reaches the application a few seconds after the hook closes, and only when the hook
+closed as `success`. If that `PATCH` fails, the application is created without it and the agent log
+says so, with the body to set by hand; the hook has already reported its status by then.
+
+Both that `PATCH` and the one made outside a hook (the workflow run by hand) retry a `403
+ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING` (`ASSET_PATCH_ATTEMPTS`, default `6`;
+`ASSET_PATCH_RETRY_DELAY`, default `5` seconds). Any other error stops the retries.
 
 ---
 
