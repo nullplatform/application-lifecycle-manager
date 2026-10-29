@@ -7,8 +7,6 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [0.4.0] - 2026-10-29
 
-## [0.4.0] - 2026-10-27
-
 ### Added
 - `APPLICATION_NAME_FROM_REPOSITORY` also renames applications that import an existing repository.
 - Add rule engine to generate repository name (`REPOSITORY_NAME_RULE` / `REPOSITORY_NAME_RULE_B64`).
