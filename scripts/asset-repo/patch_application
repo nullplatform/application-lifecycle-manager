@@ -1,0 +1,73 @@
+#!/bin/bash
+#
+# Writes the asset repository's location to the application. Sourced by every
+# asset provider's create_repository step.
+#
+# Inside a creation hook (ALM_CALLBACK_BODY_FILE set by entrypoint) the location
+# is handed to entrypoint through the callback body file, and entrypoint writes
+# it with `np application patch` once it has closed the hook. A PATCH from here
+# would race the hook lock: the asset workflow runs while the application is
+# still held, and that lock can last the whole run (see scripts/callback_body).
+# It does not travel in the callback either: a hook closed with `settings` in its
+# callback_body leaves the application in pending_hook.
+#
+# Outside a hook -- the workflow run by hand -- nothing holds the application
+# and the location is written here, with the same PATCH. A 403
+# ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING is retried; anything else fails.
+#
+# Sourced, like every other script here: no `set -e`, messages to stdout.
+
+ASSET_REPO_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/callback_body
+source "$ASSET_REPO_DIR/../callback_body"
+
+# asset_repo_store_location BODY
+#
+# BODY is the application fields to write, e.g.
+# {"settings":{"asset":{"ecr":{"uri":"...","arn":"..."}}}}. Returns non-zero
+# once it has printed why.
+asset_repo_store_location() {
+  local body="$1"
+
+  if [[ -z "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+    asset_repo_patch_application "$body"
+    return
+  fi
+
+  if ! alm_callback_body_merge "$body"; then
+    echo "ERROR: could not hand the asset repository location to the creation hook of application $APPLICATION_ID"
+    return 1
+  fi
+
+  echo "Asset repository location handed to entrypoint; application $APPLICATION_ID gets it once its creation hook is closed"
+}
+
+# asset_repo_patch_application BODY
+#
+# Returns non-zero once it has printed why. ASSET_PATCH_ATTEMPTS and
+# ASSET_PATCH_RETRY_DELAY (seconds) tune the wait for the hook lock.
+asset_repo_patch_application() {
+  local body="$1"
+  local attempts="${ASSET_PATCH_ATTEMPTS:-6}"
+  local delay="${ASSET_PATCH_RETRY_DELAY:-5}"
+  local attempt=1
+  local output
+
+  while true; do
+    # np prints its errors to stderr, which entrypoint never forwards.
+    if output=$(np application patch --id "$APPLICATION_ID" --body "$body" --format json 2>&1); then
+      echo "Application $APPLICATION_ID updated with the asset repository location"
+      return 0
+    fi
+
+    if [[ "$output" != *ENTITY_CREATION_HOOK_PENDING* || "$attempt" -ge "$attempts" ]]; then
+      echo "ERROR: failed to update application $APPLICATION_ID with the asset repository location: $output"
+      return 1
+    fi
+
+    echo "Application $APPLICATION_ID is still held by its creation hook, retrying in ${delay}s ($attempt/$attempts)"
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}

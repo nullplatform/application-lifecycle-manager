@@ -5,7 +5,7 @@ All notable changes to `application-lifecycle-manager` will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches a stable API.
 
-## [Unreleased]
+## [0.4.0] - 2026-10-29
 
 ## [0.4.0] - 2026-10-27
 
@@ -22,9 +22,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Bitbucket: `BITBUCKET_PIPELINE_FILE` chooses the template's pipeline file.
 - Bitbucket: `BITBUCKET_TRIGGER_PIPELINE_ENABLED=false` skips the first build.
 - Test suite for the GitHub code repository provider.
+- AWS ECR asset repository provider (`ecr`), with its region taken from the provider's
+  `setup.region` (`ECR_REGION` overrides it). Repositories are tagged with their application, and an
+  existing one is reused only by that application (`ECR_ADOPT_UNTAGGED=true` adopts untagged ones).
+- Test suite for the asset repository providers.
+- ECR: the provider assumes the `asset_provider_ecr` role of the `identity-access-control` provider (`ECR_ASSUME_ROLE_ARN` overrides it).
+
+### Changed
+- Docker server: the repository URI is now stored in the application's `settings.asset.docker_server.uri`.
+- An unknown asset repository provider now stops the workflow with an error naming it.
 
 ### Fixed
 - A template that does not resolve now stops the workflow instead of creating an empty repository.
+- Asset repositories: notify settings after the hook was updated.
 - GitHub: `gh` is installed from the release tarball instead of `mise`, whose attestation check
   fails on the nullplatform agent image.
 - GitHub: signing the App JWT no longer requires `python3` in the agent image. When no `python3` on

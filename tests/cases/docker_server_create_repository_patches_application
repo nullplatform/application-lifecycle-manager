@@ -1,0 +1,19 @@
+#!/bin/bash
+# docker-server stores its URI on the application, and refuses to store an empty one.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export DOCKER_SERVER_URI='registry.example.com/apps/pay"ments'
+np_patch_responses '0:{}'
+
+run_script_step asset-repo/docker-server/create_repository
+assert_status 0 || exit 1
+[[ "$(patch_body | jq -r .settings.asset.docker_server.uri)" == "$DOCKER_SERVER_URI" ]] || { echo "  FAIL: uri not patched verbatim: $(patch_body)"; exit 1; }
+grep -q $'^np\tnrn patch' "$BB_CALLS" && { echo "  FAIL: the deprecated nrn patch was used"; exit 1; }
+
+: > "$BB_CALLS"
+export DOCKER_SERVER_URI=""
+run_script_step asset-repo/docker-server/create_repository
+assert_status 1 || exit 1
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: an empty uri was patched"; exit 1; }

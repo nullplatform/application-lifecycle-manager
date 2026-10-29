@@ -1,0 +1,96 @@
+#!/bin/bash
+
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/asset-repo/patch_application
+source "$CURRENT_DIR/../patch_application"
+
+# ecr_call ARGS... -> ECR_STDOUT, ECR_STDERR, ECR_STATUS
+#
+# stderr is kept apart from stdout: the CLI can warn on a call that succeeded,
+# and that warning would otherwise break the JSON parse below.
+ecr_call() {
+  local err_file
+  err_file=$(mktemp)
+
+  ECR_STDOUT=$(aws ecr "$@" --region "$ECR_REGION" --output json 2>"$err_file")
+  ECR_STATUS=$?
+  ECR_STDERR=$(cat "$err_file")
+
+  rm -f "$err_file"
+}
+
+# The repository is tagged with its application, so a later create that lands on
+# the same name can tell a rerun from another application's repository.
+ECR_OWNER_TAG_KEY="nullplatform:application_id"
+
+echo "Creating ECR repository: $ECR_REPOSITORY_NAME in region $ECR_REGION"
+
+ecr_call create-repository --repository-name "$ECR_REPOSITORY_NAME" \
+  --tags "Key=$ECR_OWNER_TAG_KEY,Value=$APPLICATION_ID"
+
+if [[ $ECR_STATUS -eq 0 ]]; then
+  REPOSITORY=$(printf '%s' "$ECR_STDOUT" | jq -c '.repository' 2>/dev/null)
+elif [[ "$ECR_STDERR" == *RepositoryAlreadyExistsException* ]]; then
+  ecr_call describe-repositories --repository-names "$ECR_REPOSITORY_NAME"
+
+  if [[ $ECR_STATUS -ne 0 ]]; then
+    echo "ERROR: failed to describe existing ECR repository $ECR_REPOSITORY_NAME: $ECR_STDERR"
+    exit 1
+  fi
+
+  REPOSITORY=$(printf '%s' "$ECR_STDOUT" | jq -c '.repositories[0]' 2>/dev/null)
+  EXISTING_ARN=$(printf '%s' "$REPOSITORY" | jq -r '.repositoryArn // empty' 2>/dev/null)
+
+  if [[ -z "$EXISTING_ARN" ]]; then
+    echo "ERROR: could not read the ARN of existing ECR repository $ECR_REPOSITORY_NAME: $ECR_STDOUT"
+    exit 1
+  fi
+
+  ecr_call list-tags-for-resource --resource-arn "$EXISTING_ARN"
+
+  if [[ $ECR_STATUS -ne 0 ]]; then
+    echo "ERROR: failed to read the tags of existing ECR repository $ECR_REPOSITORY_NAME: $ECR_STDERR"
+    exit 1
+  fi
+
+  ECR_OWNER=$(printf '%s' "$ECR_STDOUT" | jq -r --arg k "$ECR_OWNER_TAG_KEY" \
+    'first(.tags[]? | select(.Key == $k) | .Value) // empty' 2>/dev/null)
+
+  # Two applications can map to the same name (namespace `a-b` + app `c`, and
+  # namespace `a` + app `b-c`), so only the application that created it reuses it.
+  if [[ "$ECR_OWNER" == "$APPLICATION_ID" ]]; then
+    echo "ECR repository $ECR_REPOSITORY_NAME already exists and belongs to application $APPLICATION_ID, reusing it"
+  elif [[ -n "$ECR_OWNER" ]]; then
+    echo "ERROR: ECR repository $ECR_REPOSITORY_NAME already exists and belongs to application $ECR_OWNER, not $APPLICATION_ID. Set ECR_REPOSITORY_PATH or ECR_USE_NAMESPACE=true to give this application its own name."
+    exit 1
+  elif [[ "$ECR_ADOPT_UNTAGGED" == "true" ]]; then
+    echo "WARNING: ECR repository $ECR_REPOSITORY_NAME already exists without a $ECR_OWNER_TAG_KEY tag, adopting it for application $APPLICATION_ID (ECR_ADOPT_UNTAGGED=true)"
+  else
+    echo "ERROR: ECR repository $ECR_REPOSITORY_NAME already exists and has no $ECR_OWNER_TAG_KEY tag, so it may belong to someone else. Tag it with $ECR_OWNER_TAG_KEY=$APPLICATION_ID, or set ECR_ADOPT_UNTAGGED=true to adopt untagged repositories."
+    exit 1
+  fi
+else
+  echo "ERROR: failed to create ECR repository $ECR_REPOSITORY_NAME: $ECR_STDERR"
+  exit 1
+fi
+
+ECR_REPOSITORY_URI=$(printf '%s' "$REPOSITORY" | jq -r '.repositoryUri // empty' 2>/dev/null)
+ECR_REPOSITORY_ARN=$(printf '%s' "$REPOSITORY" | jq -r '.repositoryArn // empty' 2>/dev/null)
+
+if [[ -z "$ECR_REPOSITORY_URI" || -z "$ECR_REPOSITORY_ARN" ]]; then
+  echo "ERROR: could not read the repository URI and ARN from the AWS response: $ECR_STDOUT"
+  exit 1
+fi
+
+echo "ECR repository URI: $ECR_REPOSITORY_URI"
+echo "ECR repository ARN: $ECR_REPOSITORY_ARN"
+
+BODY=$(jq -nc \
+  --arg uri "$ECR_REPOSITORY_URI" \
+  --arg arn "$ECR_REPOSITORY_ARN" \
+  '{settings: {asset: {ecr: {uri: $uri, arn: $arn}}}}')
+
+if ! asset_repo_store_location "$BODY"; then
+  exit 1
+fi

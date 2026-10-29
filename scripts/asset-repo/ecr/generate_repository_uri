@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# ECR's own pattern for repository names. Checked here so a bad name fails with
+# the name in the message, not as an InvalidParameterException from AWS.
+ECR_REPOSITORY_NAME_PATTERN='^([a-z0-9]+([._-][a-z0-9]+)*/)*[a-z0-9]+([._-][a-z0-9]+)*$'
+
+ECR_REPOSITORY_NAME=""
+
+# Tolerate `team/` or `/team`: either one would otherwise produce an empty segment.
+ECR_REPOSITORY_PATH=$(printf '%s' "$ECR_REPOSITORY_PATH" | sed -e 's|^/*||' -e 's|/*$||')
+
+if [[ -n "$ECR_REPOSITORY_PATH" ]]; then
+  ECR_REPOSITORY_NAME="$ECR_REPOSITORY_PATH/"
+fi
+
+SEPARATOR="-"
+if [[ "$ECR_USE_NAMESPACE" == "true" ]]; then
+  SEPARATOR="/"
+fi
+
+ECR_REPOSITORY_NAME="${ECR_REPOSITORY_NAME}${NAMESPACE_SLUG}${SEPARATOR}${APPLICATION_SLUG}"
+
+if [[ ${#ECR_REPOSITORY_NAME} -lt 2 || ${#ECR_REPOSITORY_NAME} -gt 256 || ! "$ECR_REPOSITORY_NAME" =~ $ECR_REPOSITORY_NAME_PATTERN ]]; then
+  echo "ERROR: '$ECR_REPOSITORY_NAME' is not a valid ECR repository name (2-256 chars, lowercase segments of [a-z0-9._-] separated by '/'). Check ECR_REPOSITORY_PATH and the namespace and application slugs."
+  exit 1
+fi
+
+echo "ECR repository name: $ECR_REPOSITORY_NAME"
+
+export ECR_REPOSITORY_PATH
+export ECR_REPOSITORY_NAME

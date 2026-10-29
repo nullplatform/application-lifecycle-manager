@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# AWS_REGION is only the last resort: on EKS the pod identity webhook injects it
+# with the cluster's region, so as an override it would hide the platform value.
+if [[ -n "$ECR_REGION" ]]; then
+  echo "Using ECR_REGION from environment: $ECR_REGION"
+else
+  ECR_REGION=$(echo "$ASSET_REPOSITORY" | jq -r '.attributes.setup.region // empty' 2>/dev/null)
+
+  if [[ -n "$ECR_REGION" ]]; then
+    echo "No ECR_REGION in environment, using value from platform: $ECR_REGION"
+  elif [[ -n "$AWS_REGION" ]]; then
+    ECR_REGION="$AWS_REGION"
+    echo "No ECR_REGION in environment or platform, using AWS_REGION: $ECR_REGION"
+  fi
+fi
+
+if [[ -z "$ECR_REGION" ]]; then
+  echo "ERROR: no region for the ECR asset provider. Set setup.region on the ECR provider, or ECR_REGION in the agent environment."
+  exit 1
+fi
+
+# shellcheck source=scripts/asset-repo/ecr/assume_role
+source "$(dirname "${BASH_SOURCE[0]}")/assume_role"
+
+export ECR_REGION
+export ECR_REPOSITORY_PATH
+export ECR_USE_NAMESPACE
+export ECR_ADOPT_UNTAGGED

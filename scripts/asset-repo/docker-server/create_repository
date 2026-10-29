@@ -1,3 +1,19 @@
 #!/bin/bash
 
-np nrn patch --nrn "$NRN" --body "{\"docker.repository_uri\":\"$DOCKER_SERVER_URI\"}"
+CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+
+# shellcheck source=scripts/asset-repo/patch_application
+source "$CURRENT_DIR/../patch_application"
+
+if [[ -z "$DOCKER_SERVER_URI" ]]; then
+  echo "ERROR: DOCKER_SERVER_URI is empty, so there is no repository location to store on the application."
+  exit 1
+fi
+
+BODY=$(jq -nc \
+  --arg uri "$DOCKER_SERVER_URI" \
+  '{settings: {asset: {docker_server: {uri: $uri}}}}')
+
+if ! asset_repo_store_location "$BODY"; then
+  exit 1
+fi

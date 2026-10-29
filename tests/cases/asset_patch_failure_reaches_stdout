@@ -1,0 +1,17 @@
+#!/bin/bash
+# np writes its errors to stderr, which entrypoint drops. Any error other than the
+# hook lock fails at once, with np's answer on stdout.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export DOCKER_SERVER_URI="registry.example.com/apps/payments-api" ASSET_PATCH_RETRY_DELAY=0
+np_patch_responses '1:{"code":"VALIDATION_ERROR","message":"settings is not allowed"}'
+
+# shellcheck disable=SC2034 # read by the asserts
+STEP_OUTPUT=$(cd "$REPO_ROOT" && source scripts/asset-repo/docker-server/create_repository 2>/dev/null)
+# shellcheck disable=SC2034
+STEP_STATUS=$?
+assert_status 1 || exit 1
+assert_contains "settings is not allowed" || exit 1
+[[ "$(patch_count)" == 1 ]] || { echo "  FAIL: a non-lock error was retried"; exit 1; }

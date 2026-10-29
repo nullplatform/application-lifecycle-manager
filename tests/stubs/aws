@@ -10,6 +10,34 @@
 
 printf 'aws\t%s\n' "$*" >> "$BB_CALLS"
 
+# `aws ecr <operation>` answers from that operation's ecr_fixture: stdout, stderr
+# and exit code, so a case can fail a call the way the CLI does.
+if [[ "$1" == "ecr" ]]; then
+  op="$2"
+
+  if [[ ! -f "$BB_FIXTURES/ecr_${op}.code" ]]; then
+    echo "aws: no fixture for 'ecr $op'" >&2
+    exit 255
+  fi
+
+  # stderr first: the CLI's warnings come before its JSON, which is what breaks a
+  # parse that merges the two.
+  cat "$BB_FIXTURES/ecr_${op}.stderr" >&2
+  cat "$BB_FIXTURES/ecr_${op}.stdout"
+  exit "$(cat "$BB_FIXTURES/ecr_${op}.code")"
+fi
+
+if [[ "$1 $2" == "sts assume-role" ]]; then
+  if [[ -n "$AWS_STUB_STS_FAIL" ]]; then
+    echo "An error occurred (AccessDenied) when calling the AssumeRole operation: not authorized to perform sts:AssumeRole" >&2
+    exit 254
+  fi
+
+  sts_body='{"Credentials":{"AccessKeyId":"ASIASTUBKEY","SecretAccessKey":"stub-secret-key","SessionToken":"stub-session-token","Expiration":"2026-10-26T13:00:00Z"}}'
+  printf '%s\n' "${AWS_STUB_STS_BODY:-$sts_body}"
+  exit 0
+fi
+
 if [[ -n "$AWS_STUB_FAIL" ]]; then
   echo "An error occurred (AccessDeniedException) when calling the GetSecretValue operation" >&2
   exit 255

@@ -1,0 +1,32 @@
+#!/bin/bash
+# The asset location is nested under settings, so it cannot go through
+# alm_callback_body_set. The merge keeps what other steps already put in the
+# body, merges objects key by key, and refuses anything that is not an object.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/callback_body"
+
+alm_callback_body_set repository_url "https://github.com/acme/payments-api"
+alm_callback_body_merge '{"settings":{"code_repository":{"provider_id":"p1"}}}' || { echo "  FAIL: first merge failed"; exit 1; }
+alm_callback_body_merge '{"settings":{"asset":{"ecr":{"uri":"u","arn":"a"}}}}' || { echo "  FAIL: second merge failed"; exit 1; }
+
+got=$(jq -S -c . "$ALM_CALLBACK_BODY_FILE" 2>&1)
+want='{"repository_url":"https://github.com/acme/payments-api","settings":{"asset":{"ecr":{"arn":"a","uri":"u"}},"code_repository":{"provider_id":"p1"}}}'
+
+if [[ "$got" != "$want" ]]; then
+  echo "  FAIL: expected $want"
+  echo "        got      $got"
+  exit 1
+fi
+
+if output=$(alm_callback_body_merge '"not-an-object"'); then
+  echo "  FAIL: a non-object was merged"
+  exit 1
+fi
+[[ "$output" == *WARNING* ]] || { echo "  FAIL: expected a WARNING, got: $output"; exit 1; }
+[[ "$(jq -S -c . "$ALM_CALLBACK_BODY_FILE")" == "$want" ]] || { echo "  FAIL: a refused merge changed the body"; exit 1; }

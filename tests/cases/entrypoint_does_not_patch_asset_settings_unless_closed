@@ -1,0 +1,46 @@
+#!/bin/bash
+# The location is written only after a successful hook that closed: a failed
+# run may have stopped before the repository existed, and a refused close leaves
+# the hook pending, so the application is still locked. A PATCH that fails after
+# the close is reported, with the body to set by hand.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+CALLBACK_URL="https://api.nullplatform.com/entity_hook/abc123"
+
+export NP_API_KEY="test-key"
+export NP_ACTION_CONTEXT="{\"notification\":{\"callback_url\":\"$CALLBACK_URL\",\"nrn\":\"organization=1:account=2:namespace=3:application=4\"}}"
+export ASSET_PATCH_RETRY_DELAY=0 ASSET_PATCH_ATTEMPTS=2
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+body='{"settings":{"asset":{"ecr":{"uri":"u","arn":"a"}}}}'
+
+# Refused close: nothing is patched.
+echo "$body" > "$ALM_CALLBACK_BODY_FILE"
+fixture PATCH "$CALLBACK_URL" 400 '{"message":"nope"}'
+np_patch_responses '0:{}'
+(cd "$REPO_ROOT" && bash entrypoint) >/dev/null 2>&1
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: patched although the close was refused"; exit 1; }
+
+# Failed workflow: nothing is patched.
+: > "$BB_CALLS"
+fixture PATCH "$CALLBACK_URL" 200 ""
+cat > "$TEST_TMP/np" <<'STUB'
+#!/bin/bash
+printf 'np\t%s\n' "$*" >> "$BB_CALLS"
+if [[ "$1" == "service" ]]; then
+  echo "create_repository failed"
+  exit 1
+fi
+echo '{}'
+STUB
+chmod +x "$TEST_TMP/np"
+(cd "$REPO_ROOT" && bash entrypoint) >/dev/null 2>&1
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: patched although the workflow failed"; exit 1; }
+
+# Closed, but the PATCH keeps failing: reported with the body.
+: > "$BB_CALLS"
+np_patch_responses '1:{"code":"ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING"}'
+output=$(cd "$REPO_ROOT" && bash entrypoint 2>&1)
+[[ "$(patch_count)" == 2 ]] || { echo "  FAIL: expected 2 attempts, got $(patch_count)"; exit 1; }
+[[ "$output" == *"WARNING: application 4 was created without its asset repository location"*'"uri":"u"'* ]] || { echo "  FAIL: expected a WARNING with the body, got:"; printf '%s\n' "$output" | sed 's/^/    /'; exit 1; }

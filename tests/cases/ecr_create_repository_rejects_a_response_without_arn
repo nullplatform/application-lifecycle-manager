@@ -1,0 +1,14 @@
+#!/bin/bash
+# An AWS answer without the ARN must not write an empty value to the application.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export ECR_REGION="us-east-1" ECR_REPOSITORY_NAME="payments-api"
+ecr_fixture create-repository 0 '{"repository":{"repositoryUri":"123.dkr.ecr.us-east-1.amazonaws.com/payments-api"}}'
+np_patch_responses '0:{}'
+
+run_script_step asset-repo/ecr/create_repository
+assert_status 1 || exit 1
+assert_contains "could not read the repository URI and ARN" || exit 1
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: the application was patched"; exit 1; }

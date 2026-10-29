@@ -1,0 +1,22 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export NRN="organization=1:account=2:namespace=3:application=42"
+export ECR_REGION="us-east-1" ASSET_REPOSITORY='{}'
+
+for arn in "--profile=admin" "arn:aws:iam::123:role/short-account" "arn:aws:s3:::bucket"; do
+  : > "$BB_CALLS"
+  np_iam_provider "$(jq -nc --arg arn "$arn" '[{selector: "asset_provider_ecr", arn: $arn}]')"
+
+  run_script_step asset-repo/ecr/build_context
+  assert_status 1 || exit 1
+  assert_contains "is not an IAM role ARN" || exit 1
+
+  if grep -q $'^aws\tsts' "$BB_CALLS"; then
+    echo "  FAIL: assumed '$arn':"
+    sed 's/^/    /' "$BB_CALLS"
+    exit 1
+  fi
+done

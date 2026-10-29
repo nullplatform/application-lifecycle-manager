@@ -1,0 +1,30 @@
+#!/bin/bash
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export NRN="organization=1:account=2:namespace=3:application=42"
+export ECR_REGION="us-east-1" ASSET_REPOSITORY='{}'
+np_iam_provider '[
+  {"selector":"OTHER_PROVIDER","arn":"arn:aws:iam::123456789012:role/other"},
+  {"selector":"asset_provider_ecr","arn":"arn:aws:iam::123456789012:role/ecr-writer"}
+]'
+
+run_script_step asset-repo/ecr/build_context
+assert_status 0 || exit 1
+
+grep -q $'^np\tprovider list --categories identity-access-control --nrn organization=1:account=2:namespace=3:application=42 ' "$BB_CALLS" \
+  || { echo "  FAIL: did not look up the IAM provider for the application NRN:"; sed 's/^/    /' "$BB_CALLS"; exit 1; }
+
+grep -qF -- "sts assume-role --role-arn=arn:aws:iam::123456789012:role/ecr-writer --role-session-name np-asset-ecr-42 --region us-east-1" "$BB_CALLS" \
+  || { echo "  FAIL: did not assume the asset_provider_ecr role:"; sed 's/^/    /' "$BB_CALLS"; exit 1; }
+
+expected=$'ASIASTUBKEY\nstub-secret-key\nstub-session-token'
+credentials=$(ecr_build_context_credentials)
+[[ "$credentials" == "$expected" ]] || { echo "  FAIL: assumed credentials not exported: $credentials"; exit 1; }
+
+if [[ "$STEP_OUTPUT" == *stub-secret-key* || "$STEP_OUTPUT" == *stub-session-token* ]]; then
+  echo "  FAIL: the assumed credentials leaked into the step output:"
+  printf '%s\n' "$STEP_OUTPUT" | sed 's/^/    /'
+  exit 1
+fi

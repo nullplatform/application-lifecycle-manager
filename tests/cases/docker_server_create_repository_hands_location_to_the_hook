@@ -1,0 +1,16 @@
+#!/bin/bash
+# Same as ECR: inside a creation hook the URI goes to the callback body file.
+source "$(dirname "$0")/../lib.sh"
+setup
+trap teardown EXIT
+
+export DOCKER_SERVER_URI="registry.example.com/apps/payments-api"
+export ALM_CALLBACK_BODY_FILE="$TEST_TMP/callback_body.json"
+np_patch_responses '0:{}'
+
+run_script_step asset-repo/docker-server/create_repository
+assert_status 0 || exit 1
+
+[[ "$(patch_count)" == 0 ]] || { echo "  FAIL: patched the application while its hook holds it"; exit 1; }
+got=$(jq -r .settings.asset.docker_server.uri "$ALM_CALLBACK_BODY_FILE")
+[[ "$got" == "$DOCKER_SERVER_URI" ]] || { echo "  FAIL: uri not in the callback body, got '$got'"; exit 1; }
