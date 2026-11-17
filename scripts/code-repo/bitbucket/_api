@@ -357,7 +357,7 @@ bb_reconcile_repository_url() {
   local body
   body=$(jq -nc --arg url "$canonical" '{repository_url: $url}')
 
-  if ! np application update --id "$APPLICATION_ID" --body "$body" --format json >/dev/null; then
+  if ! np application patch --id "$APPLICATION_ID" --body "$body" --format json >/dev/null; then
     bb_fail "Failed to update application $APPLICATION_ID with the canonical repository_url $canonical. Builds would fail to resolve the application."
   fi
 

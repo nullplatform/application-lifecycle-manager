@@ -17,7 +17,7 @@ fixture POST "/repositories/acme/my-service" 200 \
 run_step create_repository
 assert_status 0 || exit 1
 
-if ! grep -q 'application update' "$BB_CALLS"; then
+if ! grep -q 'application patch' "$BB_CALLS"; then
   echo "  FAIL: expected the application's repository_url to be reconciled. Calls:"
   sed 's/^/    /' "$BB_CALLS"
   exit 1
