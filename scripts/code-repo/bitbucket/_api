@@ -354,11 +354,29 @@ bb_reconcile_repository_url() {
 
   echo "Application repository_url ('$REPOSITORY_URL') differs from the canonical Bitbucket URL ('$canonical'). Updating application $APPLICATION_ID."
 
-  local body
+  # Inside a hook run the application sits in pending_hook, and a PATCH to it
+  # answers 403 ENTITY_HOOKS.ENTITY_CREATION_HOOK_PENDING for any identity (see
+  # scripts/callback_body). Hand the URL to the callback body instead, the way
+  # github/create_repository does; entrypoint sends it when it closes the hook.
+  if [[ -n "${ALM_CALLBACK_BODY_FILE:-}" ]]; then
+    # shellcheck source=scripts/callback_body
+    source "$(dirname "${BASH_SOURCE[0]}")/../../callback_body"
+
+    if ! alm_callback_body_set repository_url "$canonical" \
+      || [[ "$(jq -r '.repository_url // empty' "$ALM_CALLBACK_BODY_FILE" 2>/dev/null)" != "$canonical" ]]; then
+      bb_fail "Failed to hand the canonical repository_url $canonical to the hook's callback body. Builds would fail to resolve the application."
+    fi
+
+    REPOSITORY_URL="$canonical"
+    return 0
+  fi
+
+  local body output
   body=$(jq -nc --arg url "$canonical" '{repository_url: $url}')
 
-  if ! np application patch --id "$APPLICATION_ID" --body "$body" --format json >/dev/null; then
-    bb_fail "Failed to update application $APPLICATION_ID with the canonical repository_url $canonical. Builds would fail to resolve the application."
+  # np prints its errors to stderr, which entrypoint never forwards: keep them.
+  if ! output=$(np application patch --id "$APPLICATION_ID" --body "$body" --format json 2>&1); then
+    bb_fail "Failed to update application $APPLICATION_ID with the canonical repository_url $canonical. Builds would fail to resolve the application. np said: $output"
   fi
 
   REPOSITORY_URL="$canonical"
